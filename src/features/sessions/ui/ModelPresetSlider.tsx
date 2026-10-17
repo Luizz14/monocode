@@ -169,7 +169,7 @@ export function ModelPresetSlider({
     <div
       data-model-slider
       data-effort-tone={shownTone}
-      className="model-slider flex w-fit flex-col items-center gap-4 rounded-3xl bg-background-base/80 p-3 font-sans shadow-[0_8px_32px_#1a1a1a14] outline-1 -outline-offset-2 outline-content/10 backdrop-blur-sm"
+      className="model-slider flex w-fit flex-col items-center gap-4 p-3 font-sans"
     >
       <button
         type="button"

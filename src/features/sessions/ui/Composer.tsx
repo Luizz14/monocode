@@ -2393,13 +2393,7 @@ export function Composer({
                   hideSettings={controlsBeside}
                   hotkeys={hotkeys && enabled}
                   variant={hero ? "ghost" : "pill"}
-                  presetPanel={{
-                    anchor: boxRef,
-                    // The centered composer has room below; a docked one
-                    // opens the panel above itself.
-                    side: hero ? "bottom" : "top",
-                    gap: hero ? 48 : 8,
-                  }}
+                  presetSlider
                   onChange={onModelChange}
                   onSettingsChange={(settings) =>
                     onModelSettingsChange?.(settings)

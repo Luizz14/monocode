@@ -64,7 +64,7 @@ import {
   subscribeModelPresets,
   subscribeModelSliderHaptics,
 } from "../../settings/model/modelPresets";
-import { Popover, type PopoverAnchor } from "../../../shared/ui/Popover";
+import { Popover } from "../../../shared/ui/Popover";
 import { RollText } from "../../../shared/ui/RollText";
 import { MOD } from "../../../platform/tauri/platform";
 import { keybindingPressed } from "../../settings/model/settings";
@@ -91,15 +91,11 @@ type Props = {
    */
   variant?: Variant;
   /**
-   * Click opens the preset slider, centered on `anchor`, instead of the menu.
-   * The menu stays one click away from the slider's label, and is used
-   * directly while fewer than two presets can run here.
+   * Click opens the preset slider instead of the menu, in the menu's place
+   * and glass. The menu stays one click away from the slider's label, and
+   * is used directly while fewer than two presets can run here.
    */
-  presetPanel?: {
-    anchor: PopoverAnchor;
-    side: "top" | "bottom";
-    gap?: number;
-  };
+  presetSlider?: boolean;
   /** Action label for recovery surfaces that open the same model chooser. */
   triggerLabel?: string;
   /**
@@ -130,8 +126,8 @@ const MENU_WIDTH = 250;
 const MODEL_MENU_WIDTH = 310;
 const SETTING_MENU_WIDTH = 210;
 const SUBMENU_OVERLAP = -4;
-/** The slider panel: its 342px rail plus 12px padding each side. */
-const PRESET_PANEL_WIDTH = 366;
+/** The slider panel: a 342px rail, 12px padding, and a 1px frame each side. */
+const PRESET_PANEL_WIDTH = 368;
 const SELF = "[data-model-picker]";
 const TRIGGER = "[data-model-picker-trigger]";
 
@@ -320,7 +316,7 @@ export function ModelPicker({
   variant = "pill",
   triggerLabel,
   labelClassName = "",
-  presetPanel,
+  presetSlider = false,
   onChange,
   onSettingsChange,
   onClose,
@@ -438,13 +434,13 @@ export function ModelPicker({
   const providerKey = pickerHarnesses.join(",");
   const presetSteps = useMemo<PresetStep[]>(() => {
     void catalogVersion;
-    if (!presetPanel) return [];
+    if (!presetSlider) return [];
     return resolvePresetSteps(presets, source, (id) =>
       pickerHarnesses.includes(id),
     );
-  }, [presetPanel != null, presets, source, catalogVersion, providerKey]);
+  }, [presetSlider, presets, source, catalogVersion, providerKey]);
   const sliderReady = presetSteps.length >= 2;
-  const panelVisible = panelOpen && sliderReady && presetPanel != null;
+  const panelVisible = panelOpen && sliderReady;
   const currentEffortSetting = effortSetting(current);
   const currentEffortValue = currentEffortSetting
     ? settingValue(currentEffortSetting, values)
@@ -485,7 +481,7 @@ export function ModelPicker({
 
   const togglePicker = (byKeyboard = false) => {
     if (openRef.current || panelOpenRef.current) dismiss(true);
-    else if (sliderReady && presetPanel) {
+    else if (sliderReady) {
       setRecentMenu(null);
       setPanelByKeyboard(byKeyboard);
       setPanelOpen(true);
@@ -802,9 +798,7 @@ export function ModelPicker({
         }
         aria-keyshortcuts={`${MOD}.`}
         aria-expanded={open || panelVisible || recentMenu != null}
-        aria-haspopup={
-          hideSettings || (presetPanel && sliderReady) ? "dialog" : "menu"
-        }
+        aria-haspopup={hideSettings || sliderReady ? "dialog" : "menu"}
         data-model-picker-trigger
         onMouseDown={(event) => event.preventDefault()}
         onContextMenu={(event) => {
@@ -860,12 +854,10 @@ export function ModelPicker({
 
       {panelVisible ? (
         <Popover
-          anchor={presetPanel.anchor}
-          side={presetPanel.side}
-          align="center"
-          gap={presetPanel.gap}
+          anchor={button}
+          side={side}
           width={PRESET_PANEL_WIDTH}
-          bare
+          rounded="rounded-3xl"
           ignore={`${SELF}, ${TRIGGER}`}
           onDismiss={(reason) => dismiss(reason === "escape")}
           role="dialog"

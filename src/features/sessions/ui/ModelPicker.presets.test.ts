@@ -25,8 +25,10 @@ vi.mock("../../../shared/ui/Popover", () => ({
     onKeyDown,
     side,
     gap,
+    anchor,
     ...props
   }: {
+    anchor?: unknown;
     children: ReactNode;
     role?: string;
     className?: string;
@@ -43,6 +45,11 @@ vi.mock("../../../shared/ui/Popover", () => ({
         onKeyDown,
         "data-side": side,
         "data-gap": gap,
+        "data-anchor-trigger": String(
+          (
+            anchor as { current?: Element | null } | undefined
+          )?.current?.hasAttribute("data-model-picker-trigger") ?? false,
+        ),
         "aria-label": props["aria-label"],
       },
       children,
@@ -123,14 +130,13 @@ function render(
 ) {
   const onChange = vi.fn();
   const onSettingsChange = vi.fn();
-  const anchor = document.createElement("div");
   act(() =>
     root.render(
       createElement(ModelPicker, {
         harness: "claude",
         model: "claude:opus-5-5",
         values,
-        presetPanel: { anchor, side: "bottom", gap: 48 },
+        presetSlider: true,
         variant: "ghost",
         onChange,
         onSettingsChange,
@@ -167,8 +173,9 @@ describe("model picker presets", () => {
     const dialog = container.querySelector<HTMLElement>(
       '[role="dialog"][aria-label="Model presets"]',
     )!;
-    expect(dialog.dataset.side).toBe("bottom");
-    expect(dialog.dataset.gap).toBe("48");
+    // Opens where the menu did, above the chip.
+    expect(dialog.dataset.side).toBe("top");
+    expect(dialog.dataset.anchorTrigger).toBe("true");
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
     expect(container.querySelector('[role="menu"]')).toBeNull();
     // Sonnet Medium, Opus Medium, High, Max, Ultracode, Ultrathink.
@@ -260,7 +267,7 @@ describe("model picker presets", () => {
   });
 
   it("keeps the menu where no panel is wired", () => {
-    const { trigger } = render({ presetPanel: undefined, variant: "pill" });
+    const { trigger } = render({ presetSlider: false, variant: "pill" });
     act(() => trigger.click());
     expect(slider()).toBeNull();
     expect(container.querySelector('[role="menu"]')).not.toBeNull();
