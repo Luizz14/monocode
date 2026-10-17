@@ -384,6 +384,19 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
       "effort thinking reasoning fast service tier model picker composer",
   },
   {
+    id: "model-presets",
+    section: "chat",
+    label: "Model presets",
+    keywords:
+      "slider preset model effort composer max ultracode ultrathink opus sonnet",
+  },
+  {
+    id: "model-slider-haptics",
+    section: "chat",
+    label: "Trackpad haptics",
+    keywords: "haptic vibration force touch trackpad feedback slider",
+  },
+  {
     id: "composer-autocorrect",
     section: "chat",
     label: "Autocorrect",
