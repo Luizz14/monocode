@@ -15,6 +15,8 @@ mod devin_usage;
 mod external_editor;
 mod fs;
 mod gitlab;
+#[cfg(target_os = "macos")]
+mod haptics;
 mod harness;
 mod harness_updates;
 mod inbox_media;
@@ -207,6 +209,17 @@ fn set_dock_badge(
 ) {
     #[cfg(target_os = "macos")]
     macos::set_window_badge(&window, count);
+}
+
+/// Plays one trackpad haptic tick, e.g. as a slider crosses a step. A no-op
+/// off macOS and on Macs without a Force Touch trackpad.
+#[tauri::command]
+fn perform_haptic_feedback(
+    #[allow(unused_variables)] app: tauri::AppHandle,
+    #[allow(unused_variables)] pattern: String,
+) {
+    #[cfg(target_os = "macos")]
+    haptics::perform(&app, &pattern);
 }
 
 #[tauri::command]
@@ -561,6 +574,7 @@ pub fn run() {
             set_window_background_blur,
             set_dock_badge,
             set_trackpad_zoom_enabled,
+            perform_haptic_feedback,
             #[cfg(target_os = "macos")]
             menu::keybindings_set_overrides,
             #[cfg(target_os = "macos")]
