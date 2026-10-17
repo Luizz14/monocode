@@ -1,0 +1,329 @@
+/* The composer's model panel. Geometry follows the design: a 342px rail with
+   6px dots, a 36px knob that overhangs it by 5px, and a fill that runs to the
+   knob's center. Each model family brings its own icon and color; Max,
+   Ultracode, and Ultrathink also light the rail with the effort menu's tile
+   shimmer. */
+
+/* Model family colors, read by the slider and the composer's model chip.
+   Opus is the design's green, since its panel shows Opus. Sonnet, Haiku, and
+   Fable borrow the mention, heading, and skill tokens, which already carry
+   light-theme values. Generation 4 and older fade toward the text color. */
+[data-model-family="opus"] {
+  --model-family-color: color(display-p3 0.627 0.756 0.437);
+}
+
+html.theme-light [data-model-family="opus"] {
+  --model-family-color: color(display-p3 0.36 0.5 0.18);
+}
+
+[data-model-family="sonnet"] {
+  --model-family-color: var(--color-mention);
+}
+
+[data-model-family="haiku"] {
+  --model-family-color: var(--color-markdown-heading);
+}
+
+[data-model-family="fable"] {
+  --model-family-color: var(--color-skill);
+}
+
+[data-model-family] {
+  --model-color: var(--model-family-color);
+}
+
+[data-model-family][data-model-legacy] {
+  --model-color: color-mix(
+    in srgb,
+    var(--model-family-color) 60%,
+    var(--color-content)
+  );
+}
+
+/* The family icon in the composer's model chip. */
+.model-family-mark {
+  color: var(--model-color, currentColor);
+}
+
+.model-slider {
+  /* A model outside the families keeps the rail neutral. */
+  --slider-neutral: color-mix(in srgb, var(--color-content) 55%, transparent);
+  --slider-accent: var(--model-color, var(--slider-neutral));
+  --slider-accent-soft: color-mix(in srgb, var(--slider-accent) 55%, white);
+  --slider-fill: var(--slider-accent);
+  --slider-rail: color-mix(
+    in srgb,
+    var(--color-content) 11%,
+    var(--color-background-base)
+  );
+}
+
+/* The top three effort levels keep their effect: the fill takes their color
+   and the tile shimmer replays, while the icon keeps the model's color. */
+.model-slider[data-effort-tone="max"] {
+  --slider-accent: #f4b942;
+  --codex-effort-color: #f4b942;
+}
+
+.model-slider[data-effort-tone="ultracode"] {
+  --slider-accent: #a855f7;
+  --codex-effort-color: #a855f7;
+}
+
+.model-slider[data-effort-tone="ultrathink"] {
+  --slider-accent: #e879f9;
+  --slider-fill: linear-gradient(
+    90deg,
+    #f87171,
+    #fbbf24,
+    #a3e635,
+    #34d399,
+    #38bdf8,
+    #818cf8,
+    #e879f9
+  );
+}
+
+.model-slider-label {
+  cursor: pointer;
+  transition: background-color 120ms var(--motion-ease-out);
+}
+
+.model-slider-label:hover,
+.model-slider-label:focus-visible {
+  background-color: var(--color-selection);
+  outline: none;
+}
+
+.model-slider-globe {
+  color: var(--model-color, var(--slider-neutral));
+  transition: color 200ms var(--motion-ease-out);
+}
+
+/* The design sets the model name in JetBrains Mono Medium and the effort in
+   Playfair Display Italic. Both faces ship in the app (src/assets/fonts, OFL),
+   under app-only names so an installed copy, or a family that only installs
+   its italic, cannot stand in. `block` rather than `swap`: the files are local
+   and warmed when a composer mounts, so the brief block never shows, while a
+   swap would flash the fallback and change the 22px title's width. */
+@font-face {
+  font-family: "MonoCode Slider Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url("../../../assets/fonts/JetBrainsMono-Medium-latin.woff2")
+    format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "MonoCode Slider Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url("../../../assets/fonts/JetBrainsMono-Medium-latin-ext.woff2")
+    format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "MonoCode Slider Serif";
+  font-style: italic;
+  font-weight: 400;
+  font-display: block;
+  src: url("../../../assets/fonts/PlayfairDisplay-Italic-latin.woff2")
+    format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "MonoCode Slider Serif";
+  font-style: italic;
+  font-weight: 400;
+  font-display: block;
+  src: url("../../../assets/fonts/PlayfairDisplay-Italic-latin-ext.woff2")
+    format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+.model-slider-model {
+  font-family: "MonoCode Slider Mono", var(--font-mono);
+}
+
+.model-slider-effort {
+  font-family: "MonoCode Slider Serif", ui-serif, "New York", Georgia, serif;
+}
+
+/* The knob's position and the fill's extent are set from script each frame
+   (ModelPresetSlider.tsx): the knob as a transform, the fill as a clip on a
+   full-width bar ending at the knob's center. Neither moves layout. */
+.model-slider-track {
+  background-color: var(--slider-rail);
+  cursor: grab;
+  outline-style: solid;
+}
+
+.model-slider-track[data-dragging] {
+  cursor: grabbing;
+}
+
+.model-slider-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 100%;
+  border-radius: 10px;
+  /* A gradient spans the whole rail, so a longer fill reveals more of it. */
+  background: var(--slider-fill);
+  outline: 1px solid color-mix(in srgb, var(--color-content) 40%, transparent);
+  outline-offset: -2px;
+  clip-path: inset(0 100% 0 0 round 10px);
+  transition: background-color 200ms var(--motion-ease-out);
+}
+
+.model-slider-dot {
+  position: absolute;
+  top: 10px;
+  z-index: 1;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: color-mix(in srgb, var(--color-content) 10%, transparent);
+  pointer-events: none;
+}
+
+.model-slider-dot[data-active] {
+  top: 9px;
+  background-color: var(--slider-accent-soft);
+}
+
+.model-slider-knob {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  z-index: 3;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background-color: var(--color-background-base);
+  outline: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  outline-offset: -2px;
+  will-change: transform;
+  pointer-events: none;
+  transition: box-shadow 160ms var(--motion-ease-out);
+}
+
+/* No focus ring on the rail or the knob: their lines stay as in the design.
+   Once the keyboard drives the slider (opening it with the mouse does not
+   count), a soft glow in the slider's color sits under the knob instead. */
+.model-slider-track[data-focus-ring]:focus-visible .model-slider-knob {
+  box-shadow: 0 0 14px 0
+    color-mix(in srgb, var(--slider-accent) 45%, transparent);
+}
+
+.model-slider-track[data-empty] .model-slider-knob,
+.model-slider-track[data-empty] .model-slider-fill {
+  opacity: 0;
+}
+
+.model-slider-tiles-clip {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  border-radius: 10px;
+  pointer-events: none;
+  contain: paint;
+}
+
+.model-slider-tiles-clip > .model-slider-tiles {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(32, minmax(0, 1fr));
+  grid-template-rows: repeat(5, minmax(0, 1fr));
+  -webkit-mask-image:
+    linear-gradient(
+      to right,
+      transparent,
+      #000 28px,
+      #000 calc(100% - 28px),
+      transparent
+    ),
+    linear-gradient(to bottom, transparent, #000 35%, #000 65%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(
+      to right,
+      transparent,
+      #000 28px,
+      #000 calc(100% - 28px),
+      transparent
+    ),
+    linear-gradient(to bottom, transparent, #000 35%, #000 65%, transparent);
+  mask-composite: intersect;
+  animation: codex-effort-tiles-clear 5000ms linear 1 both;
+}
+
+/* Ultrathink runs the rainbow across the rail, one hue per column. */
+.model-slider[data-effort-tone="ultrathink"] .codex-effort-tile {
+  --codex-effort-color: hsl(calc(var(--tile-column) * 11.25deg) 90% 66%);
+}
+
+.model-slider-tiles .codex-effort-tile--filled {
+  animation: codex-effort-tile-fill 1400ms ease-out 3 both;
+  animation-delay: calc(var(--tile-distance) * 420ms);
+}
+
+.model-slider-ripple {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: 10px;
+  pointer-events: none;
+  opacity: 0;
+  animation: codex-effort-edge-ripple 5000ms ease-in-out 1 both;
+}
+
+.model-slider[data-effort-tone="ultrathink"] .model-slider-ripple {
+  --codex-effort-color: #c084fc;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-slider-label,
+  .model-slider-globe,
+  .model-slider-fill,
+  .model-slider-knob {
+    transition: none;
+  }
+
+  .model-slider-tiles-clip > .model-slider-tiles {
+    animation: none;
+    opacity: 0.72;
+  }
+
+  .model-slider-tiles .codex-effort-tile--filled {
+    animation: none;
+    background-color: var(--codex-effort-color);
+  }
+
+  .model-slider-ripple {
+    animation: none;
+    opacity: 0.42;
+    box-shadow: inset 0 0 12px 1px
+      color-mix(in srgb, var(--codex-effort-color) 55%, transparent);
+  }
+}

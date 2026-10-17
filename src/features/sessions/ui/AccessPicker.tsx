@@ -26,7 +26,8 @@ type Props = {
   onClose?: () => void;
   busy?: boolean;
   side?: "top" | "bottom";
-  variant?: "pill" | "plain";
+  /** `ghost` is the pill without its fill, for the new-session composer. */
+  variant?: "pill" | "plain" | "ghost";
 };
 
 const MENU_WIDTH = 288;
@@ -110,11 +111,15 @@ export function AccessPicker({
             ? `-mx-1.5 flex h-7 max-w-52 items-center gap-2 rounded-md px-1.5 text-[12px] text-content/85 ${
                 open ? "bg-content/8" : "hover:bg-content/6"
               }`
-            : `flex h-6.5 max-w-52 items-center gap-1 rounded-md px-1.5 ${
-                open
-                  ? "bg-selection text-content"
-                  : "bg-selection text-content hover:bg-selection-hover"
-              }`
+            : variant === "ghost"
+              ? `flex h-6.5 max-w-52 items-center gap-1 rounded-md px-1.5 text-content ${
+                  open ? "bg-selection" : "hover:bg-selection"
+                }`
+              : `flex h-6.5 max-w-52 items-center gap-1 rounded-md px-1.5 ${
+                  open
+                    ? "bg-selection text-content"
+                    : "bg-selection text-content hover:bg-selection-hover"
+                }`
         }
       >
         <Icon

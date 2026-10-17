@@ -5,7 +5,7 @@ import {
   CircleDashed,
   CursorMagicSelection,
   FilePlus,
-  Plus,
+  Paperclip,
   Share,
   Square,
   StickyNote,
@@ -119,7 +119,9 @@ import { ModelControlPills, ModelPicker } from "./ModelPicker";
 import { QuestionForm } from "./QuestionForm";
 import { MessageQueue } from "./MessageQueue";
 import { SkillPicker } from "../../skills/ui/SkillPicker";
-import { pathKey, projectKey } from "../../../shared/lib/paths";
+import { pathKey, projectKey, projectName } from "../../../shared/lib/paths";
+import { ProjectLogoIcon } from "../../projects/ui/ProjectLogoIcon";
+import { RollText } from "../../../shared/ui/RollText";
 import { consumeQuoteRequest, type QuoteRequest } from "../model/quoteDraft";
 import { useTabGroupLogos } from "../../projects/hooks/useTabGroupLogos";
 import { useProjectBranchesState } from "../../source-control/hooks/useProjectBranches";
@@ -205,6 +207,12 @@ type Props = {
   /** Bump to force a refocus even when `focused` was already true (e.g. window regains OS focus). */
   focusToken?: number;
   shell?: boolean;
+  /**
+   * The box's line: `dashed` for the centered new-session composer, as in
+   * the design, `solid` once it docks under a conversation. Defaults by
+   * `shell`.
+   */
+  boxBorder?: "dashed" | "solid";
   compact?: boolean;
   placeholder?: string;
   inputAriaLabel?: string;
@@ -314,10 +322,12 @@ function ToolButton({
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className={`grid size-6.5 shrink-0 place-items-center rounded-md ${
+      // No fill at rest, like the model and access chips beside it; the
+      // chips' hover fill marks hover, keyboard focus, and an open menu.
+      className={`grid size-6.5 shrink-0 place-items-center rounded-md outline-none ${
         active
-          ? "bg-selection-emphasis text-content"
-          : "bg-selection text-content/50 hover:bg-selection-hover hover:text-content"
+          ? "bg-selection text-content"
+          : "text-content/50 hover:bg-selection hover:text-content focus-visible:bg-selection focus-visible:text-content"
       } disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-content/50`}
     >
       {children}
@@ -331,6 +341,7 @@ export function Composer({
   focusToken,
   hotkeys = false,
   shell = false,
+  boxBorder = shell ? "dashed" : "solid",
   compact = false,
   placeholder,
   inputAriaLabel,
@@ -1703,6 +1714,10 @@ export function Composer({
     );
   };
 
+  // As a block the field drops the inline baseline gap under it, so the box
+  // is exactly its rows tall.
+  const fieldPadding = "block px-4 py-3";
+
   const attachFromPicker = () => {
     if (!attachmentsSupported) return;
     void pickAttachments().then((files) => {
@@ -1734,15 +1749,19 @@ export function Composer({
           onDismiss={onUsageLimitDismiss}
         />
       ) : null}
-      <MessageQueue
-        messages={queuedMessages}
-        status={queueStatus}
-        onDelete={onDeleteQueuedMessage}
-        onEdit={onEditQueuedMessage}
-        onEditingChange={onQueuedMessageEditingChange}
-        onSteer={onSteerQueuedMessage}
-        onResume={onResumeQueue}
-      />
+      {/* The queue sits on the box like a tab: inset past the box's 24px
+          corners, and down onto its line, which is drawn 3px inside the edge. */}
+      <div className="relative z-20 -mb-[3px] px-4">
+        <MessageQueue
+          messages={queuedMessages}
+          status={queueStatus}
+          onDelete={onDeleteQueuedMessage}
+          onEdit={onEditQueuedMessage}
+          onEditingChange={onQueuedMessageEditingChange}
+          onSteer={onSteerQueuedMessage}
+          onResume={onResumeQueue}
+        />
+      </div>
       <div className="relative overflow-visible">
         {mcpPickerOpen ? (
           <div className="absolute inset-x-0 bottom-full z-30 mb-1">
@@ -1908,35 +1927,52 @@ export function Composer({
           ref={boxRef}
           data-composer-box
           data-composer-editing={resendEdited ? "" : undefined}
-          className={`relative z-10 border bg-content/3 backdrop-blur-sm ${
-            resendEdited
-              ? "edit-last-turn-composer rounded-lg"
-              : "rounded-lg border-content/10 has-focus:border-content/20"
+          data-composer-border={boxBorder}
+          // A glass box drawn by an outline inset from its edge: dashed while
+          // it waits centered in a new session, solid once docked.
+          className={`relative z-10 rounded-3xl bg-content/3 outline-[1.5px] -outline-offset-3 backdrop-blur-sm ${
+            boxBorder === "dashed" ? "outline-dashed" : "outline-solid"
           } ${
             fileDrag
-              ? "border-accent/60"
+              ? "outline-accent/60"
               : resendEdited
-                ? ""
-                : "border-content/10 has-focus:border-content/20"
+                ? "edit-last-turn-composer"
+                : "outline-content/10 has-focus:outline-content/20"
           }`}
         >
           {fileDrag ? (
-            <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-lg bg-accent/8 text-[12px] text-content/70">
+            <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-3xl bg-accent/8 text-[12px] text-content/70">
               Drop files to attach
             </div>
           ) : null}
           {hideTopBar ? null : (
-            <div className="flex min-w-0 items-center gap-2.5 overflow-hidden px-3 pt-2.5">
+            <div className="flex min-w-0 items-center gap-2.5 overflow-hidden px-4 pt-2.5">
               {!remote && !hideProjectPicker ? (
                 <CwdPicker
                   cwd={cwd}
                   recents={recents}
                   projectLogoPath={projectLogoPath}
                   enabled={enabled}
+                  chevron
                   onCwdChange={onCwdChange}
                   onNewTerminal={worktreeRemoved ? undefined : onNewTerminal}
                   onClose={() => ref.current?.focus()}
-                />
+                >
+                  {cwd && looksLikeProject(cwd) ? (
+                    // A project goes by its name, as the new-session heading
+                    // calls it, instead of its path.
+                    <>
+                      <ProjectLogoIcon
+                        path={projectLogoPath}
+                        fallbackStrokeWidth={1.5}
+                      />
+                      <RollText
+                        text={projectName(cwd)}
+                        className="truncate font-mono text-[12px]"
+                      />
+                    </>
+                  ) : undefined}
+                </CwdPicker>
               ) : null}
               {hideBranchPicker ? null : draftWorkspace &&
                 onWorkspaceModeChange &&
@@ -2042,9 +2078,7 @@ export function Composer({
               ref={highlightRef}
               aria-hidden
               style={{ textIndent: modeIndent }}
-              className={`composer-highlight pointer-events-none absolute inset-0 max-h-40 overflow-hidden whitespace-pre-wrap wrap-break-word px-3 text-sm leading-5.5 text-content font-sans ${
-                shell ? "py-4" : "py-3"
-              }`}
+              className={`composer-highlight pointer-events-none absolute inset-0 max-h-40 overflow-hidden whitespace-pre-wrap wrap-break-word text-sm leading-5.5 text-content font-sans ${fieldPadding}`}
             >
               <ComposerHighlight
                 text={draft}
@@ -2078,9 +2112,7 @@ export function Composer({
               }
               aria-label={inputAriaLabel}
               disabled={disabled}
-              className={`composer-field scrollbar-none relative max-h-40 w-full resize-none overflow-x-hidden whitespace-pre-wrap wrap-break-word bg-transparent px-3 text-sm leading-5.5 outline-none placeholder:overflow-hidden placeholder:text-ellipsis placeholder:whitespace-nowrap font-sans ${
-                shell ? "py-4" : "py-3"
-              }`}
+              className={`composer-field scrollbar-none relative max-h-40 w-full resize-none overflow-x-hidden whitespace-pre-wrap wrap-break-word bg-transparent text-sm leading-5.5 outline-none placeholder:overflow-hidden placeholder:text-ellipsis placeholder:whitespace-nowrap font-sans ${fieldPadding}`}
               onFocus={onFocus}
               onKeyDown={onKeyDown}
               onPaste={onPaste}
@@ -2115,7 +2147,117 @@ export function Composer({
             />
           </div>
 
-          <div className="flex items-center gap-1 px-2 pb-2">
+          <div className="flex items-center gap-1 px-4 pb-3">
+            {!compact && operatorActive ? (
+              <ModeCommandPill
+                name={OPERATOR_COMMAND.name}
+                onClear={() => {
+                  setOperatorSelected(false);
+                  clearLeadingMode(OPERATOR_COMMAND.name);
+                  ref.current?.focus();
+                }}
+              />
+            ) : null}
+            {!compact && orchestrationActive ? (
+              <ModeCommandPill
+                name={ORCHESTRATOR_COMMAND.name}
+                onClear={() => {
+                  setOrchestrationSelected(false);
+                  clearLeadingMode(ORCHESTRATOR_COMMAND.name);
+                  ref.current?.focus();
+                }}
+              />
+            ) : null}
+            {!compact && planActive ? (
+              <ModeCommandPill
+                name={PLAN_COMMAND.name}
+                onClear={() => {
+                  setPlanSelected(false);
+                  clearLeadingMode(PLAN_COMMAND.name);
+                  ref.current?.focus();
+                }}
+              />
+            ) : null}
+            {!compact && draftActive ? (
+              <ModeCommandPill
+                name={DRAFT_COMMAND.name}
+                onClear={() => {
+                  setDraftSelected(false);
+                  clearLeadingMode(DRAFT_COMMAND.name);
+                  ref.current?.focus();
+                }}
+              />
+            ) : null}
+            <div
+              className="composer-toolbar flex min-w-0 flex-1 items-center"
+              onWheel={(e) => {
+                if (
+                  e.target instanceof Element &&
+                  e.target.closest(
+                    "[data-model-picker], [data-model-control], [data-access-picker], [data-model-settings]",
+                  )
+                ) {
+                  return;
+                }
+                const el = e.currentTarget;
+                if (el.scrollWidth <= el.clientWidth) return;
+                if (e.deltaX === 0 && e.deltaY !== 0) el.scrollLeft += e.deltaY;
+              }}
+            >
+              <div className="flex shrink-0 items-center gap-1">
+                <ModelPicker
+                  harness={harness}
+                  model={model}
+                  values={modelSettings}
+                  allowedHarnesses={allowedModelHarnesses}
+                  project={cwd}
+                  hideSettings={controlsBeside}
+                  hotkeys={hotkeys && enabled}
+                  variant="ghost"
+                  presetSlider
+                  onChange={onModelChange}
+                  onSettingsChange={(settings) =>
+                    onModelSettingsChange?.(settings)
+                  }
+                  onClose={() => ref.current?.focus()}
+                />
+                {controlsBeside ? (
+                  <ModelControlPills
+                    harness={harness}
+                    model={model}
+                    values={modelSettings}
+                    onSettingsChange={(settings) =>
+                      onModelSettingsChange?.(settings)
+                    }
+                    onClose={() => ref.current?.focus()}
+                  />
+                ) : null}
+                {!compact && harness !== "fx" ? (
+                  <AccessPicker
+                    value={runtimeMode}
+                    busy={busy}
+                    variant="ghost"
+                    onChange={onRuntimeModeChange}
+                    onClose={() => ref.current?.focus()}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            {resendEdited ? (
+              <button
+                type="button"
+                title="Stop editing last message"
+                aria-label="Stop editing last message"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={exitEditMode}
+                className="edit-last-turn-button flex h-6.5 shrink-0 items-center gap-1 rounded-md border border-current/20 px-2 text-[11px] font-medium transition-[background-color,color,border-color] hover:border-current/35 hover:bg-content/15 hover:text-content focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              >
+                <X className="size-3" strokeWidth={1.8} />
+                <span>Cancel edit</span>
+              </button>
+            ) : null}
+            {/* Attach sits beside Send, with the other ghost controls. */}
             <div
               ref={plusRef}
               className={compact ? "hidden" : "relative shrink-0"}
@@ -2125,13 +2267,13 @@ export function Composer({
                 active={plusOpen}
                 onClick={() => setPlusOpen((open) => !open)}
               >
-                <Plus className="size-3.5" strokeWidth={1.5} />
+                <Paperclip className="size-3.5" strokeWidth={1.75} />
               </ToolButton>
               {plusOpen ? (
                 <Popover
                   anchor={plusRef}
                   side="top"
-                  align="start"
+                  align="end"
                   width={250}
                   onDismiss={() => setPlusOpen(false)}
                   data-composer-plus
@@ -2286,112 +2428,6 @@ export function Composer({
                 </Popover>
               ) : null}
             </div>
-            {!compact && operatorActive ? (
-              <ModeCommandPill
-                name={OPERATOR_COMMAND.name}
-                onClear={() => {
-                  setOperatorSelected(false);
-                  clearLeadingMode(OPERATOR_COMMAND.name);
-                  ref.current?.focus();
-                }}
-              />
-            ) : null}
-            {!compact && orchestrationActive ? (
-              <ModeCommandPill
-                name={ORCHESTRATOR_COMMAND.name}
-                onClear={() => {
-                  setOrchestrationSelected(false);
-                  clearLeadingMode(ORCHESTRATOR_COMMAND.name);
-                  ref.current?.focus();
-                }}
-              />
-            ) : null}
-            {!compact && planActive ? (
-              <ModeCommandPill
-                name={PLAN_COMMAND.name}
-                onClear={() => {
-                  setPlanSelected(false);
-                  clearLeadingMode(PLAN_COMMAND.name);
-                  ref.current?.focus();
-                }}
-              />
-            ) : null}
-            {!compact && draftActive ? (
-              <ModeCommandPill
-                name={DRAFT_COMMAND.name}
-                onClear={() => {
-                  setDraftSelected(false);
-                  clearLeadingMode(DRAFT_COMMAND.name);
-                  ref.current?.focus();
-                }}
-              />
-            ) : null}
-            <div
-              className="composer-toolbar flex min-w-0 flex-1 items-center"
-              onWheel={(e) => {
-                if (
-                  e.target instanceof Element &&
-                  e.target.closest(
-                    "[data-model-picker], [data-model-control], [data-access-picker], [data-model-settings]",
-                  )
-                ) {
-                  return;
-                }
-                const el = e.currentTarget;
-                if (el.scrollWidth <= el.clientWidth) return;
-                if (e.deltaX === 0 && e.deltaY !== 0) el.scrollLeft += e.deltaY;
-              }}
-            >
-              <div className="flex shrink-0 items-center gap-1">
-                <ModelPicker
-                  harness={harness}
-                  model={model}
-                  values={modelSettings}
-                  allowedHarnesses={allowedModelHarnesses}
-                  project={cwd}
-                  hideSettings={controlsBeside}
-                  hotkeys={hotkeys && enabled}
-                  onChange={onModelChange}
-                  onSettingsChange={(settings) =>
-                    onModelSettingsChange?.(settings)
-                  }
-                  onClose={() => ref.current?.focus()}
-                />
-                {controlsBeside ? (
-                  <ModelControlPills
-                    harness={harness}
-                    model={model}
-                    values={modelSettings}
-                    onSettingsChange={(settings) =>
-                      onModelSettingsChange?.(settings)
-                    }
-                    onClose={() => ref.current?.focus()}
-                  />
-                ) : null}
-                {!compact && harness !== "fx" ? (
-                  <AccessPicker
-                    value={runtimeMode}
-                    busy={busy}
-                    onChange={onRuntimeModeChange}
-                    onClose={() => ref.current?.focus()}
-                  />
-                ) : null}
-              </div>
-            </div>
-
-            {resendEdited ? (
-              <button
-                type="button"
-                title="Stop editing last message"
-                aria-label="Stop editing last message"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={exitEditMode}
-                className="edit-last-turn-button flex h-6.5 shrink-0 items-center gap-1 rounded-md border border-current/20 px-2 text-[11px] font-medium transition-[background-color,color,border-color] hover:border-current/35 hover:bg-content/15 hover:text-content focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              >
-                <X className="size-3" strokeWidth={1.8} />
-                <span>Cancel edit</span>
-              </button>
-            ) : null}
             <div className="flex shrink-0 items-center gap-1">
               <ComposerAction
                 busy={busy}
@@ -2399,6 +2435,7 @@ export function Composer({
                 hasValue={hasValue && !worktreeRemoved}
                 allowBusySubmit={allowBusySubmit}
                 label={draftActive ? "Save draft" : "Send"}
+                rounded="rounded-lg"
                 onSend={() => submit(ref.current?.value ?? "")}
                 onStop={() => onStop?.()}
               />
@@ -2533,6 +2570,7 @@ export function ComposerAction({
   hasValue,
   allowBusySubmit = true,
   label = "Send",
+  rounded = "rounded-md",
   onSend,
   onStop,
 }: {
@@ -2541,6 +2579,8 @@ export function ComposerAction({
   hasValue: boolean;
   allowBusySubmit?: boolean;
   label?: string;
+  /** Corner radius class; the new-session composer uses `rounded-lg`. */
+  rounded?: string;
   onSend: () => void;
   onStop: () => void;
 }) {
@@ -2551,7 +2591,7 @@ export function ComposerAction({
         title={label}
         aria-label={label}
         disabled
-        className="composer-send primary-action grid size-6.5 place-items-center rounded-md disabled:cursor-default"
+        className={`composer-send primary-action grid size-6.5 place-items-center ${rounded} disabled:cursor-default`}
       >
         <ArrowUp className="size-3.5" strokeWidth={2.25} />
       </button>
@@ -2564,7 +2604,7 @@ export function ComposerAction({
         title={label}
         aria-label={label}
         onClick={onSend}
-        className="composer-send primary-action grid size-6.5 place-items-center rounded-md"
+        className={`composer-send primary-action grid size-6.5 place-items-center ${rounded}`}
       >
         <ArrowUp className="size-3.5" strokeWidth={2.25} />
       </button>
@@ -2574,7 +2614,7 @@ export function ComposerAction({
         title="Stop"
         aria-label="Stop"
         onClick={onStop}
-        className="grid size-6.5 place-items-center rounded-md bg-white text-black hover:bg-white/90"
+        className={`grid size-6.5 place-items-center ${rounded} bg-white text-black hover:bg-white/90`}
       >
         <Square className="size-2.5 fill-current" strokeWidth={0} />
       </button>
@@ -2588,7 +2628,7 @@ export function ComposerAction({
       aria-label={label}
       disabled={!hasValue}
       onClick={onSend}
-      className="composer-send primary-action grid size-6.5 place-items-center rounded-md disabled:cursor-default"
+      className={`composer-send primary-action grid size-6.5 place-items-center ${rounded} disabled:cursor-default`}
     >
       <ArrowUp className="size-3.5" strokeWidth={2.25} />
     </button>

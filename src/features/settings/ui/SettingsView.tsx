@@ -6,6 +6,7 @@ import {
   ArrowDownCircle,
   Check,
   ChevronDown,
+  ChevronUp,
   ExternalLink,
   FolderOpen,
   Globe,
@@ -34,6 +35,26 @@ import {
   type ReactNode,
 } from "react";
 import { HarnessIcon } from "../../sessions/ui/HarnessIcon";
+import {
+  loadModelPresets,
+  loadModelSliderHaptics,
+  MODEL_PRESET_LABEL_LIMIT,
+  MODEL_PRESET_LIMIT,
+  newModelPresetId,
+  resetModelPresets,
+  saveModelPresets,
+  saveModelSliderHaptics,
+  subscribeModelPresets,
+  subscribeModelSliderHaptics,
+  type ModelPreset,
+} from "../model/modelPresets";
+import {
+  resolvePresetModel,
+  resolvePresetSteps,
+  shortModelName,
+  suggestModelPreset,
+} from "../../sessions/model/modelPresetSteps";
+import { LOCAL_MODEL_SOURCE } from "../../sessions/ui/modelSource";
 import {
   ColorPickerPopover,
   ColorSwatchRow,
@@ -181,6 +202,7 @@ import {
   loadDefaultModels,
   loadHiddenPickerProviders,
   loadLastModelChoice,
+  modelEffortSetting,
   modelsFor,
   resolveModel,
   saveDefaultModel,
@@ -1121,6 +1143,8 @@ function ChatPage() {
         </Row>
       </Group>
 
+      <ModelPresetsGroup />
+
       <Group
         title="Editor"
         description="What happens when you save a file in the workspace editor."
@@ -1187,6 +1211,316 @@ function ChatPage() {
         </Row>
       </Group>
     </>
+  );
+}
+
+/** Joins a harness and model id into one `Select` value. */
+function presetModelValue(harness: HarnessId, model: string): string {
+  return `${harness}\u0000${model}`;
+}
+
+/**
+ * The stops on the composer's model slider. Each row picks a model and the
+ * effort it runs at; the order here is the order on the rail.
+ */
+function ModelPresetsGroup() {
+  const presets = useSyncExternalStore(
+    subscribeModelPresets,
+    loadModelPresets,
+    loadModelPresets,
+  );
+  const haptics = useSyncExternalStore(
+    subscribeModelSliderHaptics,
+    loadModelSliderHaptics,
+    loadModelSliderHaptics,
+  );
+  const catalogVersion = useSyncExternalStore(
+    subscribeModels,
+    getModelSnapshot,
+    getModelSnapshot,
+  );
+  const availabilityVersion = useSyncExternalStore(
+    subscribeHarnessAvailability,
+    getHarnessAvailabilitySnapshot,
+    getHarnessAvailabilitySnapshot,
+  );
+
+  const models = useMemo(() => {
+    void catalogVersion;
+    void availabilityVersion;
+    return HARNESSES.filter(isHarnessAvailable).flatMap(modelsFor);
+  }, [catalogVersion, availabilityVersion]);
+  const modelOptions = useMemo(
+    () =>
+      models.map((model) => ({
+        value: presetModelValue(model.harness, model.id),
+        label: model.provider
+          ? `${model.provider.name} · ${shortModelName(model)}`
+          : shortModelName(model),
+        icon: <HarnessIcon harness={model.harness} className="size-3.5" />,
+      })),
+    [models],
+  );
+  const suggestion = suggestModelPreset(presets, models);
+  const atLimit = presets.length >= MODEL_PRESET_LIMIT;
+
+  const update = (index: number, patch: Partial<ModelPreset>) =>
+    saveModelPresets(
+      presets.map((preset, i) =>
+        i === index ? { ...preset, ...patch } : preset,
+      ),
+    );
+  const move = (index: number, by: -1 | 1) => {
+    const target = index + by;
+    if (target < 0 || target >= presets.length) return;
+    const next = [...presets];
+    [next[index], next[target]] = [next[target], next[index]];
+    saveModelPresets(next);
+  };
+  const remove = (index: number) =>
+    saveModelPresets(presets.filter((_, i) => i !== index));
+  const add = () => {
+    if (!suggestion || atLimit) return;
+    saveModelPresets([...presets, { id: newModelPresetId(), ...suggestion }]);
+  };
+
+  return (
+    <Group
+      id="model-presets"
+      title="Model presets"
+      description="The stops on the composer's model slider, left to right. Click the model in the composer to open it; drag or use the arrow keys to switch. Give a preset a name to show it there instead of the model's. Max, Ultracode, and Ultrathink light the rail up."
+      action={
+        <SecondaryButton onClick={resetModelPresets}>
+          <RotateCcw className="size-3.5" strokeWidth={1.75} />
+          Reset
+        </SecondaryButton>
+      }
+    >
+      {presets.length === 0 ? (
+        <p className="border-b border-content/5 px-4 py-3.5 text-[12px] text-content/45">
+          No presets. The model chip opens the model menu until there are at
+          least two.
+        </p>
+      ) : null}
+      {presets.map((preset, index) => {
+        const model = resolvePresetModel(preset, LOCAL_MODEL_SOURCE);
+        const effort = model ? modelEffortSetting(model) : undefined;
+        const runnable =
+          resolvePresetSteps([preset], LOCAL_MODEL_SOURCE).length === 1;
+        const value = presetModelValue(preset.harness, preset.model);
+        const options = modelOptions.some((option) => option.value === value)
+          ? modelOptions
+          : [
+              {
+                value,
+                label: `${preset.model.slice(preset.model.indexOf(":") + 1)} (unavailable)`,
+                icon: (
+                  <HarnessIcon harness={preset.harness} className="size-3.5" />
+                ),
+              },
+              ...modelOptions,
+            ];
+        const effortOptions = effort
+          ? [
+              ...(effort.options.some(
+                (option) => option.value === preset.effort,
+              )
+                ? []
+                : [
+                    {
+                      value: preset.effort,
+                      label: preset.effort
+                        ? `${preset.effort} (unavailable)`
+                        : "Default",
+                    },
+                  ]),
+              ...effort.options,
+            ]
+          : [];
+        return (
+          <div
+            key={preset.id}
+            data-model-preset-row
+            className="flex items-center gap-2 border-b border-content/5 px-4 py-2.5 last:border-b-0"
+          >
+            <span className="w-4 shrink-0 text-right text-[11px] tabular-nums text-content/35">
+              {index + 1}
+            </span>
+            <div className="w-40 shrink-0">
+              <Select
+                label={`Preset ${index + 1} model`}
+                value={value}
+                options={options}
+                onChange={(next) => {
+                  const picked = models.find(
+                    (item) => presetModelValue(item.harness, item.id) === next,
+                  );
+                  if (!picked) return;
+                  const levels = modelEffortSetting(picked);
+                  update(index, {
+                    harness: picked.harness,
+                    model: picked.id,
+                    effort: !levels
+                      ? ""
+                      : levels.options.some(
+                            (option) => option.value === preset.effort,
+                          )
+                        ? preset.effort
+                        : levels.value,
+                  });
+                }}
+              />
+            </div>
+            <div className="w-32 shrink-0">
+              {effort ? (
+                <Select
+                  label={`Preset ${index + 1} effort`}
+                  value={preset.effort}
+                  options={effortOptions}
+                  onChange={(next) => update(index, { effort: next })}
+                />
+              ) : (
+                <span className="text-[12px] text-content/40">
+                  {model ? "No effort levels" : ""}
+                </span>
+              )}
+            </div>
+            <PresetLabelInput
+              label={`Preset ${index + 1} name`}
+              value={preset.label ?? ""}
+              placeholder={model ? shortModelName(model) : "Name"}
+              onCommit={(next) =>
+                update(index, { label: next.trim() || undefined })
+              }
+            />
+            {runnable ? null : (
+              <span
+                className="text-[11px] text-content/40"
+                title="Left off the slider until this provider, model, and effort are available."
+              >
+                Not on slider
+              </span>
+            )}
+            <div className="ml-auto flex shrink-0 items-center gap-0.5">
+              <PresetIconButton
+                label={`Move preset ${index + 1} left`}
+                disabled={index === 0}
+                onClick={() => move(index, -1)}
+              >
+                <ChevronUp className="size-3.5" strokeWidth={1.75} />
+              </PresetIconButton>
+              <PresetIconButton
+                label={`Move preset ${index + 1} right`}
+                disabled={index === presets.length - 1}
+                onClick={() => move(index, 1)}
+              >
+                <ChevronDown className="size-3.5" strokeWidth={1.75} />
+              </PresetIconButton>
+              <PresetIconButton
+                label={`Remove preset ${index + 1}`}
+                onClick={() => remove(index)}
+              >
+                <Trash2 className="size-3.5" strokeWidth={1.75} />
+              </PresetIconButton>
+            </div>
+          </div>
+        );
+      })}
+      <div className="flex items-center gap-2 border-b border-content/5 px-4 py-2.5 last:border-b-0">
+        <SecondaryButton disabled={!suggestion || atLimit} onClick={add}>
+          <Plus className="size-3.5" strokeWidth={1.75} />
+          Add preset
+        </SecondaryButton>
+        {atLimit ? (
+          <span className="text-[11px] text-content/40">
+            Up to {MODEL_PRESET_LIMIT} presets fit on the slider.
+          </span>
+        ) : null}
+      </div>
+      <Row
+        id="model-slider-haptics"
+        label="Trackpad haptics"
+        description="On a Mac, tick the trackpad each time a drag on the slider passes a preset. Needs a Force Touch trackpad and follows the haptic feedback setting in System Settings."
+      >
+        <Toggle
+          label="Trackpad haptics"
+          on={haptics}
+          onChange={saveModelSliderHaptics}
+        />
+      </Row>
+    </Group>
+  );
+}
+
+/**
+ * The name a preset shows on the slider. Saved on blur or Enter so trimming
+ * never fights the typing; Escape puts the saved name back.
+ */
+function PresetLabelInput({
+  label,
+  value,
+  placeholder,
+  onCommit,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onCommit: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    if (draft.trim() !== value) onCommit(draft);
+  };
+  return (
+    <input
+      type="text"
+      aria-label={label}
+      title="Name on the slider; empty uses the model's"
+      value={draft}
+      placeholder={placeholder}
+      maxLength={MODEL_PRESET_LABEL_LIMIT}
+      spellCheck={false}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commit();
+          event.currentTarget.blur();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          setDraft(value);
+        }
+      }}
+      className="h-[26px] w-32 min-w-0 rounded-md border border-content/10 bg-content/5 px-2 text-[12px] text-content outline-none placeholder:text-content/35 hover:border-content/20 focus:border-content/30"
+    />
+  );
+}
+
+function PresetIconButton({
+  label,
+  disabled = false,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="grid size-6.5 place-items-center rounded-md text-content/50 hover:bg-content/8 hover:text-content disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent"
+    >
+      {children}
+    </button>
   );
 }
 

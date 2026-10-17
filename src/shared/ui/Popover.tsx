@@ -52,6 +52,11 @@ type Props = Omit<ComponentPropsWithoutRef<"div">, "style"> & {
   bare?: boolean;
   /** Corner radius of the glass frame. Defaults to `rounded-xl`. */
   rounded?: string;
+  /**
+   * Draws the frame's 1px line 2px inside its edge, an outline with a
+   * negative offset, instead of as a border on the edge.
+   */
+  insetLine?: boolean;
   style?: CSSProperties;
   autoFocus?: boolean;
   /** Wiring this in hands Popover the outside-click and Escape handling. */
@@ -78,6 +83,9 @@ function dialogLayer(layer: number | undefined, inDialog: boolean): number {
 }
 
 const FRAME = "isolate overflow-hidden border border-content/10 shadow-xl";
+/* The inset line is its own layer above the glass (see `insetLine`), so the
+   frame itself draws no line. */
+const FRAME_INSET_LINE = "isolate overflow-hidden shadow-xl";
 
 /** Which corner the open animation grows from, so it reads as anchored. */
 function origin(side: PopoverSide, align: PopoverAlign): string {
@@ -210,6 +218,7 @@ function NativePopover({
     layer: _layer,
     bare: _bare,
     rounded: _rounded,
+    insetLine: _insetLine,
     ...rest
   } = props;
   return createPortal(
@@ -242,6 +251,7 @@ function WebPopover({
   layer: requestedLayer,
   bare = false,
   rounded = "rounded-xl",
+  insetLine = false,
   className,
   style,
   autoFocus = false,
@@ -349,7 +359,7 @@ function WebPopover({
   // Keep the backdrop-filter on a stable frame. WebKit can briefly paint a
   // stale backdrop when the same composited element is transformed and then
   // invalidated by a child hover. Only this unblurred content layer moves.
-  const frameInset = bare ? 0 : 2;
+  const frameInset = bare || insetLine ? 0 : 2;
   const contentMaxHeight = constrainHeight
     ? position
       ? Math.max(0, position.maxHeight - frameInset)
@@ -364,7 +374,9 @@ function WebPopover({
       data-popover-side={position?.side ?? side}
       data-dialog-popover={inDialog || undefined}
       style={{ ...placed, zIndex: layer }}
-      className={bare ? undefined : `${FRAME} ${rounded}`}
+      className={
+        bare ? undefined : `${insetLine ? FRAME_INSET_LINE : FRAME} ${rounded}`
+      }
     >
       {bare ? null : <GlassBackdrop />}
       <div
@@ -384,6 +396,16 @@ function WebPopover({
       >
         {children}
       </div>
+      {insetLine && !bare ? (
+        // Not an outline on the frame: in WebKit the glass's backdrop filter
+        // gets its own compositing layer, painted over the frame's outline.
+        // A later sibling stacked above the glass stays on top.
+        <div
+          aria-hidden="true"
+          data-popover-line
+          className="pointer-events-none absolute inset-0 z-[2] rounded-[inherit] outline-1 -outline-offset-2 outline-content/10"
+        />
+      ) : null}
     </div>,
     document.body,
   );

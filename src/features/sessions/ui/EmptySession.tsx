@@ -59,7 +59,14 @@ export function EmptySession({ cwd, composer, hasChatBackground }: Props) {
               className="truncate text-lg text-content"
               title={project ? cwd : undefined}
             >
-              {title}
+              {project ? (
+                <>
+                  What should we work on in{" "}
+                  <em className="font-medium">{project}?</em>
+                </>
+              ) : (
+                title
+              )}
             </h1>
           </div>
 
