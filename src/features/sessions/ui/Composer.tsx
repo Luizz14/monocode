@@ -119,7 +119,9 @@ import { ModelControlPills, ModelPicker } from "./ModelPicker";
 import { QuestionForm } from "./QuestionForm";
 import { MessageQueue } from "./MessageQueue";
 import { SkillPicker } from "../../skills/ui/SkillPicker";
-import { pathKey, projectKey } from "../../../shared/lib/paths";
+import { pathKey, projectKey, projectName } from "../../../shared/lib/paths";
+import { ProjectLogoIcon } from "../../projects/ui/ProjectLogoIcon";
+import { RollText } from "../../../shared/ui/RollText";
 import { consumeQuoteRequest, type QuoteRequest } from "../model/quoteDraft";
 import { useTabGroupLogos } from "../../projects/hooks/useTabGroupLogos";
 import { useProjectBranchesState } from "../../source-control/hooks/useProjectBranches";
@@ -1703,6 +1705,13 @@ export function Composer({
     );
   };
 
+  // The centered new-session composer follows the newer design; once it
+  // docks under a transcript it keeps the compact look.
+  const hero = !!shell;
+  // As a block the field drops the inline baseline gap under it, so the box
+  // is exactly its rows tall.
+  const fieldPadding = hero ? "block px-4 py-3" : "px-3 py-3";
+
   const attachFromPicker = () => {
     if (!attachmentsSupported) return;
     void pickAttachments().then((files) => {
@@ -1908,35 +1917,69 @@ export function Composer({
           ref={boxRef}
           data-composer-box
           data-composer-editing={resendEdited ? "" : undefined}
-          className={`relative z-10 border bg-content/3 backdrop-blur-sm ${
-            resendEdited
-              ? "edit-last-turn-composer rounded-lg"
-              : "rounded-lg border-content/10 has-focus:border-content/20"
-          } ${
-            fileDrag
-              ? "border-accent/60"
-              : resendEdited
-                ? ""
-                : "border-content/10 has-focus:border-content/20"
-          }`}
+          className={
+            hero
+              ? // The new-session composer: a rounder box drawn by a dashed
+                // outline inset from its edge.
+                `relative z-10 rounded-3xl bg-content/3 outline-[1.5px] -outline-offset-3 outline-dashed backdrop-blur-sm ${
+                  fileDrag
+                    ? "outline-accent/60"
+                    : "outline-content/10 has-focus:outline-content/20"
+                }`
+              : `relative z-10 border bg-content/3 backdrop-blur-sm ${
+                  resendEdited
+                    ? "edit-last-turn-composer rounded-lg"
+                    : "rounded-lg border-content/10 has-focus:border-content/20"
+                } ${
+                  fileDrag
+                    ? "border-accent/60"
+                    : resendEdited
+                      ? ""
+                      : "border-content/10 has-focus:border-content/20"
+                }`
+          }
         >
           {fileDrag ? (
-            <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-lg bg-accent/8 text-[12px] text-content/70">
+            <div
+              className={`pointer-events-none absolute inset-0 z-20 grid place-items-center bg-accent/8 text-[12px] text-content/70 ${
+                hero ? "rounded-3xl" : "rounded-lg"
+              }`}
+            >
               Drop files to attach
             </div>
           ) : null}
           {hideTopBar ? null : (
-            <div className="flex min-w-0 items-center gap-2.5 overflow-hidden px-3 pt-2.5">
+            <div
+              className={`flex min-w-0 items-center gap-2.5 overflow-hidden pt-2.5 ${
+                hero ? "px-4" : "px-3"
+              }`}
+            >
               {!remote && !hideProjectPicker ? (
                 <CwdPicker
                   cwd={cwd}
                   recents={recents}
                   projectLogoPath={projectLogoPath}
                   enabled={enabled}
+                  chevron={hero}
                   onCwdChange={onCwdChange}
                   onNewTerminal={worktreeRemoved ? undefined : onNewTerminal}
                   onClose={() => ref.current?.focus()}
-                />
+                >
+                  {hero && cwd && looksLikeProject(cwd) ? (
+                    // The new-session composer names the project, as its
+                    // heading does, instead of spelling out the path.
+                    <>
+                      <ProjectLogoIcon
+                        path={projectLogoPath}
+                        fallbackStrokeWidth={1.5}
+                      />
+                      <RollText
+                        text={projectName(cwd)}
+                        className="truncate font-mono text-[12px]"
+                      />
+                    </>
+                  ) : undefined}
+                </CwdPicker>
               ) : null}
               {hideBranchPicker ? null : draftWorkspace &&
                 onWorkspaceModeChange &&
@@ -2042,9 +2085,7 @@ export function Composer({
               ref={highlightRef}
               aria-hidden
               style={{ textIndent: modeIndent }}
-              className={`composer-highlight pointer-events-none absolute inset-0 max-h-40 overflow-hidden whitespace-pre-wrap wrap-break-word px-3 text-sm leading-5.5 text-content font-sans ${
-                shell ? "py-4" : "py-3"
-              }`}
+              className={`composer-highlight pointer-events-none absolute inset-0 max-h-40 overflow-hidden whitespace-pre-wrap wrap-break-word text-sm leading-5.5 text-content font-sans ${fieldPadding}`}
             >
               <ComposerHighlight
                 text={draft}
@@ -2078,9 +2119,7 @@ export function Composer({
               }
               aria-label={inputAriaLabel}
               disabled={disabled}
-              className={`composer-field scrollbar-none relative max-h-40 w-full resize-none overflow-x-hidden whitespace-pre-wrap wrap-break-word bg-transparent px-3 text-sm leading-5.5 outline-none placeholder:overflow-hidden placeholder:text-ellipsis placeholder:whitespace-nowrap font-sans ${
-                shell ? "py-4" : "py-3"
-              }`}
+              className={`composer-field scrollbar-none relative max-h-40 w-full resize-none overflow-x-hidden whitespace-pre-wrap wrap-break-word bg-transparent text-sm leading-5.5 outline-none placeholder:overflow-hidden placeholder:text-ellipsis placeholder:whitespace-nowrap font-sans ${fieldPadding}`}
               onFocus={onFocus}
               onKeyDown={onKeyDown}
               onPaste={onPaste}
@@ -2115,7 +2154,9 @@ export function Composer({
             />
           </div>
 
-          <div className="flex items-center gap-1 px-2 pb-2">
+          <div
+            className={`flex items-center gap-1 ${hero ? "px-4 pb-3" : "px-2 pb-2"}`}
+          >
             <div
               ref={plusRef}
               className={compact ? "hidden" : "relative shrink-0"}
@@ -2351,6 +2392,14 @@ export function Composer({
                   project={cwd}
                   hideSettings={controlsBeside}
                   hotkeys={hotkeys && enabled}
+                  variant={hero ? "ghost" : "pill"}
+                  presetPanel={{
+                    anchor: boxRef,
+                    // The centered composer has room below; a docked one
+                    // opens the panel above itself.
+                    side: hero ? "bottom" : "top",
+                    gap: hero ? 48 : 8,
+                  }}
                   onChange={onModelChange}
                   onSettingsChange={(settings) =>
                     onModelSettingsChange?.(settings)
@@ -2372,6 +2421,7 @@ export function Composer({
                   <AccessPicker
                     value={runtimeMode}
                     busy={busy}
+                    variant={hero ? "ghost" : "pill"}
                     onChange={onRuntimeModeChange}
                     onClose={() => ref.current?.focus()}
                   />
@@ -2399,6 +2449,7 @@ export function Composer({
                 hasValue={hasValue && !worktreeRemoved}
                 allowBusySubmit={allowBusySubmit}
                 label={draftActive ? "Save draft" : "Send"}
+                rounded={hero ? "rounded-lg" : "rounded-md"}
                 onSend={() => submit(ref.current?.value ?? "")}
                 onStop={() => onStop?.()}
               />
@@ -2533,6 +2584,7 @@ export function ComposerAction({
   hasValue,
   allowBusySubmit = true,
   label = "Send",
+  rounded = "rounded-md",
   onSend,
   onStop,
 }: {
@@ -2541,6 +2593,8 @@ export function ComposerAction({
   hasValue: boolean;
   allowBusySubmit?: boolean;
   label?: string;
+  /** Corner radius class; the new-session composer uses `rounded-lg`. */
+  rounded?: string;
   onSend: () => void;
   onStop: () => void;
 }) {
@@ -2551,7 +2605,7 @@ export function ComposerAction({
         title={label}
         aria-label={label}
         disabled
-        className="composer-send primary-action grid size-6.5 place-items-center rounded-md disabled:cursor-default"
+        className={`composer-send primary-action grid size-6.5 place-items-center ${rounded} disabled:cursor-default`}
       >
         <ArrowUp className="size-3.5" strokeWidth={2.25} />
       </button>
@@ -2564,7 +2618,7 @@ export function ComposerAction({
         title={label}
         aria-label={label}
         onClick={onSend}
-        className="composer-send primary-action grid size-6.5 place-items-center rounded-md"
+        className={`composer-send primary-action grid size-6.5 place-items-center ${rounded}`}
       >
         <ArrowUp className="size-3.5" strokeWidth={2.25} />
       </button>
@@ -2574,7 +2628,7 @@ export function ComposerAction({
         title="Stop"
         aria-label="Stop"
         onClick={onStop}
-        className="grid size-6.5 place-items-center rounded-md bg-white text-black hover:bg-white/90"
+        className={`grid size-6.5 place-items-center ${rounded} bg-white text-black hover:bg-white/90`}
       >
         <Square className="size-2.5 fill-current" strokeWidth={0} />
       </button>
@@ -2588,7 +2642,7 @@ export function ComposerAction({
       aria-label={label}
       disabled={!hasValue}
       onClick={onSend}
-      className="composer-send primary-action grid size-6.5 place-items-center rounded-md disabled:cursor-default"
+      className={`composer-send primary-action grid size-6.5 place-items-center ${rounded} disabled:cursor-default`}
     >
       <ArrowUp className="size-3.5" strokeWidth={2.25} />
     </button>

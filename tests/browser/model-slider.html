@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Model slider fixture</title>
+    <script>
+      // The composer reads its window's label; every backend call fails, as
+      // it would with no app behind the page.
+      window.__TAURI_INTERNALS__ = {
+        metadata: {
+          currentWindow: { label: "main" },
+          currentWebview: { windowLabel: "main", label: "main" },
+        },
+        invoke: () => Promise.reject(new Error("No Tauri in this fixture")),
+        transformCallback: () => 0,
+        convertFileSrc: (path) => path,
+      };
+    </script>
+  </head>
+  <body class="bg-background-base text-content">
+    <div id="root"></div>
+    <script type="module" src="./model-slider.tsx"></script>
+  </body>
+</html>
