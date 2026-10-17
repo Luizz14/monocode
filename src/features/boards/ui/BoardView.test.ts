@@ -186,7 +186,7 @@ function route(command: string): unknown {
       return { board: layout, types };
     case "azure_boards_query":
       return { items, truncated: false };
-    case "azure_boards_projects":
+    case "azure_pipelines_projects":
       return [{ id: "p1", name: "Proj" }];
     case "azure_boards_teams":
       return [{ id: "t1", name: "Team" }];

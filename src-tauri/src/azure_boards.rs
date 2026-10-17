@@ -204,20 +204,6 @@ struct DynamicFields {
 }
 
 #[tauri::command]
-pub async fn azure_boards_projects(app: AppHandle) -> Result<Vec<AzureBoardsEntity>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let config = require_config(&app)?;
-        let response = azure_get(
-            &config,
-            &format!("/_apis/projects?$top=500&api-version={API_VERSION}"),
-        )?;
-        parse_projects(&response.value)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
 pub async fn azure_boards_teams(
     app: AppHandle,
     project: String,
@@ -703,10 +689,6 @@ fn parse_named_entities(value: &Value, what: &str) -> Result<Vec<AzureBoardsEnti
             .then_with(|| a.name.cmp(&b.name))
     });
     Ok(entities)
-}
-
-fn parse_projects(value: &Value) -> Result<Vec<AzureBoardsEntity>, String> {
-    parse_named_entities(value, "projects")
 }
 
 fn parse_teams(value: &Value) -> Result<Vec<AzureBoardsEntity>, String> {
@@ -1607,16 +1589,16 @@ mod tests {
     }
 
     #[test]
-    fn parses_projects_and_teams_sorted() {
+    fn parses_teams_sorted() {
         let value = json!({ "value": [
             { "id": "2", "name": "beta" },
             { "id": "1", "name": "Alpha" },
             { "id": "3", "name": "" }
         ]});
-        let names: Vec<String> = parse_projects(&value)
+        let names: Vec<String> = parse_teams(&value)
             .unwrap()
             .into_iter()
-            .map(|project| project.name)
+            .map(|team| team.name)
             .collect();
         assert_eq!(names, vec!["Alpha", "beta"]);
         assert!(parse_teams(&json!({})).is_err());

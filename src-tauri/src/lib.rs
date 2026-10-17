@@ -421,7 +421,6 @@ pub fn run() {
             azure_devops::azure_devops_work_item_thread,
             azure_devops::azure_devops_work_item_comment,
             azure_devops::azure_devops_mr_diff,
-            azure_boards::azure_boards_projects,
             azure_boards::azure_boards_teams,
             azure_boards::azure_boards_team_setup,
             azure_boards::azure_boards_areas,
