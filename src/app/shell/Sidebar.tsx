@@ -26,6 +26,7 @@ import {
   PanelLeft,
   Pin,
   Plus,
+  Rocket,
   Search,
   Share,
   Settings,
@@ -325,11 +326,13 @@ type Props = {
   onNewTerminal?: () => void;
   onSearch?: () => void;
   onOpenInbox?: () => void;
+  onOpenPipelines?: () => void;
   onOpenInboxItem?: (item: LinkedWorkItem, sessionId: string) => void;
   onOpenNotes?: () => void;
   onOpenAutomations?: () => void;
   onGoToFile?: () => void;
   searchActive?: boolean;
+  pipelinesActive?: boolean;
   inboxActive?: boolean;
   notesActive?: boolean;
   automationsActive?: boolean;
@@ -421,11 +424,13 @@ function SidebarComponent({
   onNew,
   onSearch,
   onOpenInbox,
+  onOpenPipelines,
   onOpenInboxItem,
   onOpenNotes,
   onOpenAutomations,
   onGoToFile,
   searchActive = false,
+  pipelinesActive = false,
   inboxActive = false,
   notesActive = false,
   automationsActive = false,
@@ -837,6 +842,7 @@ function SidebarComponent({
   const showSidebarFooter = !projectRailOpen;
   const otherViewActive =
     searchActive ||
+    pipelinesActive ||
     inboxActive ||
     notesActive ||
     automationsActive ||
@@ -1798,11 +1804,13 @@ function SidebarComponent({
               onRemoveProject={onRemoveProject}
               onNew={onNew}
               onSearch={onSearch}
+              onOpenPipelines={onOpenPipelines}
               onOpenInbox={onOpenInbox}
               onOpenNotificationSettings={onOpenNotificationSettings}
               onOpenNotes={notesEnabled ? onOpenNotes : undefined}
               onOpenAutomations={onOpenAutomations}
               searchActive={searchActive}
+              pipelinesActive={pipelinesActive}
               inboxActive={inboxActive}
               notesActive={notesActive}
               automationsActive={automationsActive}
@@ -2324,6 +2332,8 @@ function SidebarComponent({
           onTabChange={onCompactTabPick}
           onSearch={onSearch}
           searchActive={searchActive}
+          onOpenPipelines={onOpenPipelines}
+          pipelinesActive={pipelinesActive}
           onOpenInbox={onOpenInbox}
           inboxActive={inboxActive}
           onOpenNotificationSettings={onOpenNotificationSettings}
@@ -2355,6 +2365,8 @@ function SidebarComponent({
           onGoForward={onGoForward}
           onSearch={onSearch}
           searchActive={searchActive}
+          onOpenPipelines={onOpenPipelines}
+          pipelinesActive={pipelinesActive}
           onOpenInbox={onOpenInbox}
           inboxActive={inboxActive}
           notesEnabled={notesEnabled}
@@ -2435,11 +2447,13 @@ function SidebarProjectPicker({
   onRemoveProject,
   onNew,
   onSearch,
+  onOpenPipelines,
   onOpenInbox,
   onOpenNotificationSettings,
   onOpenNotes,
   onOpenAutomations,
   searchActive = false,
+  pipelinesActive = false,
   inboxActive = false,
   notesActive = false,
   automationsActive = false,
@@ -2453,11 +2467,13 @@ function SidebarProjectPicker({
   onRemoveProject?: Props["onRemoveProject"];
   onNew?: () => string | void;
   onSearch?: () => void;
+  onOpenPipelines?: () => void;
   onOpenInbox?: () => void;
   onOpenNotificationSettings?: (projectPath?: string) => void;
   onOpenNotes?: () => void;
   onOpenAutomations?: () => void;
   searchActive?: boolean;
+  pipelinesActive?: boolean;
   inboxActive?: boolean;
   notesActive?: boolean;
   automationsActive?: boolean;
@@ -2535,6 +2551,15 @@ function SidebarProjectPicker({
             <Zap className="size-3.5" strokeWidth={1.75} />
           </IconButton>
         ) : null}
+        {onOpenPipelines ? (
+          <IconButton
+            label="Pipelines"
+            active={pipelinesActive}
+            onClick={onOpenPipelines}
+          >
+            <Rocket className="size-3.5" strokeWidth={1.75} />
+          </IconButton>
+        ) : null}
       </div>
       {inboxMenu ? (
         <InboxNotificationMenu
@@ -2570,6 +2595,8 @@ function CompactProjectRail({
   onTabChange,
   onSearch,
   searchActive,
+  onOpenPipelines,
+  pipelinesActive = false,
   onOpenInbox,
   inboxActive,
   onOpenNotificationSettings,
@@ -2603,6 +2630,8 @@ function CompactProjectRail({
   onTabChange: (tab: SidebarTab) => void;
   onSearch?: () => void;
   searchActive: boolean;
+  onOpenPipelines?: () => void;
+  pipelinesActive?: boolean;
   onOpenInbox?: () => void;
   inboxActive: boolean;
   onOpenNotificationSettings?: (projectPath?: string) => void;
@@ -2648,6 +2677,7 @@ function CompactProjectRail({
     active && onLeaveActive ? onLeaveActive : open;
   const workspaceActive =
     !searchActive &&
+    !pipelinesActive &&
     !inboxActive &&
     !notesActive &&
     !automationsActive &&
@@ -2802,6 +2832,14 @@ function CompactProjectRail({
           active={automationsActive}
           onClick={action(automationsActive, onOpenAutomations)}
         />
+        {onOpenPipelines ? (
+          <CompactRailAction
+            label="Pipelines"
+            icon={Rocket}
+            active={pipelinesActive}
+            onClick={action(pipelinesActive, onOpenPipelines)}
+          />
+        ) : null}
       </div>
       <div className="min-h-2 flex-1" />
       <div className="flex w-full flex-col items-center gap-1 py-1.5">
