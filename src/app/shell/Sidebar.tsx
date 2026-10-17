@@ -22,10 +22,12 @@ import {
   GitBranch,
   GitPullRequest,
   Inbox,
+  Kanban,
   ListFilter,
   PanelLeft,
   Pin,
   Plus,
+  Rocket,
   Search,
   Share,
   Settings,
@@ -325,14 +327,18 @@ type Props = {
   onNewTerminal?: () => void;
   onSearch?: () => void;
   onOpenInbox?: () => void;
+  onOpenPipelines?: () => void;
   onOpenInboxItem?: (item: LinkedWorkItem, sessionId: string) => void;
   onOpenNotes?: () => void;
   onOpenAutomations?: () => void;
+  onOpenBoards?: () => void;
   onGoToFile?: () => void;
   searchActive?: boolean;
+  pipelinesActive?: boolean;
   inboxActive?: boolean;
   notesActive?: boolean;
   automationsActive?: boolean;
+  boardsActive?: boolean;
   notesEnabled?: boolean;
   onToggleProjectRail?: () => void;
   projectRailOpen?: boolean;
@@ -421,14 +427,18 @@ function SidebarComponent({
   onNew,
   onSearch,
   onOpenInbox,
+  onOpenPipelines,
   onOpenInboxItem,
   onOpenNotes,
   onOpenAutomations,
+  onOpenBoards,
   onGoToFile,
   searchActive = false,
+  pipelinesActive = false,
   inboxActive = false,
   notesActive = false,
   automationsActive = false,
+  boardsActive = false,
   notesEnabled = true,
   onToggleProjectRail,
   projectRailOpen = true,
@@ -837,9 +847,11 @@ function SidebarComponent({
   const showSidebarFooter = !projectRailOpen;
   const otherViewActive =
     searchActive ||
+    pipelinesActive ||
     inboxActive ||
     notesActive ||
     automationsActive ||
+    boardsActive ||
     settingsOpen;
   // A remembered Mono sits underneath these views; select it only while visible.
   const railMonos = monos
@@ -1798,14 +1810,18 @@ function SidebarComponent({
               onRemoveProject={onRemoveProject}
               onNew={onNew}
               onSearch={onSearch}
+              onOpenPipelines={onOpenPipelines}
               onOpenInbox={onOpenInbox}
               onOpenNotificationSettings={onOpenNotificationSettings}
               onOpenNotes={notesEnabled ? onOpenNotes : undefined}
               onOpenAutomations={onOpenAutomations}
+              onOpenBoards={onOpenBoards}
               searchActive={searchActive}
+              pipelinesActive={pipelinesActive}
               inboxActive={inboxActive}
               notesActive={notesActive}
               automationsActive={automationsActive}
+              boardsActive={boardsActive}
               inboxUnseen={inboxUnseen}
             />
           ) : null}
@@ -2324,6 +2340,8 @@ function SidebarComponent({
           onTabChange={onCompactTabPick}
           onSearch={onSearch}
           searchActive={searchActive}
+          onOpenPipelines={onOpenPipelines}
+          pipelinesActive={pipelinesActive}
           onOpenInbox={onOpenInbox}
           inboxActive={inboxActive}
           onOpenNotificationSettings={onOpenNotificationSettings}
@@ -2331,6 +2349,8 @@ function SidebarComponent({
           notesActive={notesActive}
           onOpenAutomations={onOpenAutomations}
           automationsActive={automationsActive}
+          onOpenBoards={onOpenBoards}
+          boardsActive={boardsActive}
           onOpenSettings={onOpenSettings}
           onTogglePanel={onToggleProjectRail}
           onLeaveActive={onGoBack}
@@ -2355,6 +2375,8 @@ function SidebarComponent({
           onGoForward={onGoForward}
           onSearch={onSearch}
           searchActive={searchActive}
+          onOpenPipelines={onOpenPipelines}
+          pipelinesActive={pipelinesActive}
           onOpenInbox={onOpenInbox}
           inboxActive={inboxActive}
           notesEnabled={notesEnabled}
@@ -2362,6 +2384,8 @@ function SidebarComponent({
           notesActive={notesActive}
           onOpenAutomations={onOpenAutomations}
           automationsActive={automationsActive}
+          onOpenBoards={onOpenBoards}
+          boardsActive={boardsActive}
           onTogglePanel={onToggleProjectRail}
           onSelectProject={onSelectProject}
           onOpenProject={onOpenProject}
@@ -2435,14 +2459,18 @@ function SidebarProjectPicker({
   onRemoveProject,
   onNew,
   onSearch,
+  onOpenPipelines,
   onOpenInbox,
   onOpenNotificationSettings,
   onOpenNotes,
   onOpenAutomations,
+  onOpenBoards,
   searchActive = false,
+  pipelinesActive = false,
   inboxActive = false,
   notesActive = false,
   automationsActive = false,
+  boardsActive = false,
   inboxUnseen = false,
 }: {
   cwd: string;
@@ -2453,14 +2481,18 @@ function SidebarProjectPicker({
   onRemoveProject?: Props["onRemoveProject"];
   onNew?: () => string | void;
   onSearch?: () => void;
+  onOpenPipelines?: () => void;
   onOpenInbox?: () => void;
   onOpenNotificationSettings?: (projectPath?: string) => void;
   onOpenNotes?: () => void;
   onOpenAutomations?: () => void;
+  onOpenBoards?: () => void;
   searchActive?: boolean;
+  pipelinesActive?: boolean;
   inboxActive?: boolean;
   notesActive?: boolean;
   automationsActive?: boolean;
+  boardsActive?: boolean;
   inboxUnseen?: boolean;
 }) {
   const [inboxMenu, setInboxMenu] = useState<{ x: number; y: number } | null>(
@@ -2521,6 +2553,15 @@ function SidebarProjectPicker({
             </span>
           </IconButton>
         ) : null}
+        {onOpenBoards ? (
+          <IconButton
+            label="Boards"
+            active={boardsActive}
+            onClick={onOpenBoards}
+          >
+            <Kanban className="size-3.5" strokeWidth={1.75} />
+          </IconButton>
+        ) : null}
         {onOpenNotes ? (
           <IconButton label="Notes" active={notesActive} onClick={onOpenNotes}>
             <StickyNote className="size-3.5" strokeWidth={1.75} />
@@ -2533,6 +2574,15 @@ function SidebarProjectPicker({
             onClick={onOpenAutomations}
           >
             <Zap className="size-3.5" strokeWidth={1.75} />
+          </IconButton>
+        ) : null}
+        {onOpenPipelines ? (
+          <IconButton
+            label="Pipelines"
+            active={pipelinesActive}
+            onClick={onOpenPipelines}
+          >
+            <Rocket className="size-3.5" strokeWidth={1.75} />
           </IconButton>
         ) : null}
       </div>
@@ -2570,6 +2620,8 @@ function CompactProjectRail({
   onTabChange,
   onSearch,
   searchActive,
+  onOpenPipelines,
+  pipelinesActive = false,
   onOpenInbox,
   inboxActive,
   onOpenNotificationSettings,
@@ -2577,6 +2629,8 @@ function CompactProjectRail({
   notesActive,
   onOpenAutomations,
   automationsActive,
+  onOpenBoards,
+  boardsActive = false,
   onOpenSettings,
   onTogglePanel,
   onLeaveActive,
@@ -2603,6 +2657,8 @@ function CompactProjectRail({
   onTabChange: (tab: SidebarTab) => void;
   onSearch?: () => void;
   searchActive: boolean;
+  onOpenPipelines?: () => void;
+  pipelinesActive?: boolean;
   onOpenInbox?: () => void;
   inboxActive: boolean;
   onOpenNotificationSettings?: (projectPath?: string) => void;
@@ -2610,6 +2666,8 @@ function CompactProjectRail({
   notesActive: boolean;
   onOpenAutomations?: () => void;
   automationsActive: boolean;
+  onOpenBoards?: () => void;
+  boardsActive?: boolean;
   onOpenSettings?: () => void;
   onTogglePanel?: () => void;
   onLeaveActive?: () => void;
@@ -2648,9 +2706,11 @@ function CompactProjectRail({
     active && onLeaveActive ? onLeaveActive : open;
   const workspaceActive =
     !searchActive &&
+    !pipelinesActive &&
     !inboxActive &&
     !notesActive &&
     !automationsActive &&
+    !boardsActive &&
     !monoViewActive;
   const openWorkspaceTab = (nextTab: SidebarTab) => {
     if (!workspaceActive) onLeaveActive?.();
@@ -2788,6 +2848,14 @@ function CompactProjectRail({
             setInboxMenu({ x, y });
           }}
         />
+        {onOpenBoards ? (
+          <CompactRailAction
+            label="Boards"
+            icon={Kanban}
+            active={boardsActive}
+            onClick={action(boardsActive, onOpenBoards)}
+          />
+        ) : null}
         {onOpenNotes ? (
           <CompactRailAction
             label="Notes"
@@ -2802,6 +2870,14 @@ function CompactProjectRail({
           active={automationsActive}
           onClick={action(automationsActive, onOpenAutomations)}
         />
+        {onOpenPipelines ? (
+          <CompactRailAction
+            label="Pipelines"
+            icon={Rocket}
+            active={pipelinesActive}
+            onClick={action(pipelinesActive, onOpenPipelines)}
+          />
+        ) : null}
       </div>
       <div className="min-h-2 flex-1" />
       <div className="flex w-full flex-col items-center gap-1 py-1.5">

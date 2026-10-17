@@ -5,11 +5,13 @@ import {
   FolderPlus,
   Internet,
   Inbox,
+  Kanban,
   MoreHorizontal,
   Pin,
   PinOff,
   File,
   Plus,
+  Rocket,
   Search,
   Settings,
   Zap,
@@ -102,6 +104,8 @@ type Props = {
   onGoForward?: () => void;
   onSearch?: () => void;
   searchActive?: boolean;
+  onOpenPipelines?: () => void;
+  pipelinesActive?: boolean;
   onOpenInbox?: () => void;
   inboxActive?: boolean;
   notesEnabled?: boolean;
@@ -109,6 +113,8 @@ type Props = {
   notesActive?: boolean;
   onOpenAutomations?: () => void;
   automationsActive?: boolean;
+  onOpenBoards?: () => void;
+  boardsActive?: boolean;
   onTogglePanel?: () => void;
   onSelectProject: (path: string) => void;
   onOpenProject: () => void;
@@ -141,6 +147,8 @@ export function ProjectRail({
   onGoForward,
   onSearch,
   searchActive = false,
+  onOpenPipelines,
+  pipelinesActive = false,
   onOpenInbox,
   inboxActive = false,
   notesEnabled = true,
@@ -148,6 +156,8 @@ export function ProjectRail({
   notesActive = false,
   onOpenAutomations,
   automationsActive = false,
+  onOpenBoards,
+  boardsActive = false,
   onTogglePanel,
   onSelectProject,
   onOpenProject,
@@ -331,9 +341,11 @@ export function ProjectRail({
   // Another view in the main area means no project row is the current one.
   const otherViewActive =
     searchActive ||
+    pipelinesActive ||
     inboxActive ||
     notesActive ||
     automationsActive ||
+    boardsActive ||
     !!monos?.activeId;
   const pinnedIds = sections.pinned.map((item) => item.path);
   const projectIds = groupedProjectSections.ungrouped.map((item) => item.path);
@@ -401,6 +413,15 @@ export function ProjectRail({
               dot={inboxUnseen}
               ariaLabel={inboxUnseen ? "Inbox, new items" : "Inbox"}
             />
+            {onOpenBoards ? (
+              <RailAction
+                label="Boards"
+                icon={Kanban}
+                onClick={onOpenBoards}
+                active={boardsActive}
+                ariaLabel="Boards"
+              />
+            ) : null}
             {notesEnabled ? (
               <RailAction
                 label="Notes"
@@ -417,6 +438,15 @@ export function ProjectRail({
               active={automationsActive}
               ariaLabel="Automations"
             />
+            {onOpenPipelines ? (
+              <RailAction
+                label="Pipelines"
+                icon={Rocket}
+                onClick={onOpenPipelines}
+                active={pipelinesActive}
+                ariaLabel="Pipelines"
+              />
+            ) : null}
           </div>
 
           <div

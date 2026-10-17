@@ -17,7 +17,7 @@ const MAX_DIFF_FILE_BYTES: usize = 512 * 1024;
 /// Hunks render for the first N files; the rest stay listed without hunks.
 const MAX_DIFF_HUNK_FILES: usize = 40;
 const USER_AGENT: &str = "MonoCode";
-const API_VERSION: &str = "7.1";
+pub(crate) const API_VERSION: &str = "7.1";
 const CONNECTION_DATA_API_VERSION: &str = "7.1-preview.1";
 const WIT_COMMENTS_API_VERSION: &str = "7.1-preview.4";
 
@@ -29,9 +29,16 @@ pub struct AzureDevOpsStatus {
     pub organization: String,
 }
 
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureDevOpsProject {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
-struct AzureDevOpsConfig {
-    url: String,
+pub(crate) struct AzureDevOpsConfig {
+    pub(crate) url: String,
     token: String,
 }
 
@@ -178,6 +185,21 @@ pub async fn azure_devops_repo(app: AppHandle, cwd: String) -> Result<String, St
     tauri::async_runtime::spawn_blocking(move || {
         let config = require_config(&app)?;
         azure_devops_repo_for(&expand_home(&cwd), &config.url)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// The organization's projects, for the Boards and Pipelines project pickers.
+#[tauri::command]
+pub async fn azure_devops_projects(app: AppHandle) -> Result<Vec<AzureDevOpsProject>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = require_config(&app)?;
+        let response = azure_get(
+            &config,
+            &format!("/_apis/projects?$top=500&api-version={API_VERSION}"),
+        )?;
+        Ok(parse_projects(&response.value))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -692,6 +714,24 @@ fn azure_fetch_wit_batch(
     config: &AzureDevOpsConfig,
     ids: &[i64],
 ) -> Result<Vec<AzureDevOpsWorkItem>, String> {
+    let response = azure_get(config, &wit_batch_path(ids))?;
+    let rows = response
+        .value
+        .get("value")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Azure DevOps did not return work items".to_string())?;
+    let mut items: Vec<AzureDevOpsWorkItem> = rows
+        .iter()
+        .filter_map(|row| parse_wit(row, &config.url))
+        .collect();
+    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(items)
+}
+
+/// Azure rejects `fields` combined with `$expand`, so the list asks for the
+/// explicit fields only and builds the web URL itself. `errorPolicy=omit`
+/// turns deleted or unreadable ids into `null` rows instead of failing.
+fn wit_batch_path(ids: &[i64]) -> String {
     let joined = ids
         .iter()
         .map(ToString::to_string)
@@ -708,21 +748,29 @@ fn azure_fetch_wit_batch(
         "System.TeamProject",
     ]
     .join(",");
-    let path = format!(
-        "/_apis/wit/workitems?ids={joined}&fields={fields}&$expand=relations&api-version={API_VERSION}"
-    );
-    let response = azure_get(config, &path)?;
-    let rows = response
-        .value
-        .get("value")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "Azure DevOps did not return work items".to_string())?;
-    let mut items: Vec<AzureDevOpsWorkItem> = rows.iter().filter_map(parse_wit).collect();
-    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    Ok(items)
+    format!(
+        "/_apis/wit/workitems?ids={joined}&fields={fields}&errorPolicy=omit&api-version={API_VERSION}"
+    )
 }
 
 // ---- Parsing ----
+
+fn parse_projects(value: &Value) -> Vec<AzureDevOpsProject> {
+    let mut projects: Vec<AzureDevOpsProject> = value
+        .get("value")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|row| {
+            let id = string_field(row, "id").filter(|id| !id.is_empty())?;
+            let name = string_field(row, "name").filter(|name| !name.is_empty())?;
+            Some(AzureDevOpsProject { id, name })
+        })
+        .collect();
+    projects.sort_by_key(|project| project.name.to_lowercase());
+    projects
+}
 
 fn parse_pr_list(
     value: &Value,
@@ -872,7 +920,7 @@ fn parse_pr_thread(
     })
 }
 
-fn parse_wit(row: &Value) -> Option<AzureDevOpsWorkItem> {
+fn parse_wit(row: &Value, base_url: &str) -> Option<AzureDevOpsWorkItem> {
     let number = row.get("id").and_then(Value::as_i64)?;
     if number <= 0 {
         return None;
@@ -887,7 +935,8 @@ fn parse_wit(row: &Value) -> Option<AzureDevOpsWorkItem> {
             .get("_links")
             .and_then(|links| links.get("html"))
             .and_then(|html| string_field(html, "href"))
-            .unwrap_or_default(),
+            .filter(|href| !href.is_empty())
+            .unwrap_or_else(|| work_item_web_url(base_url, &project, number)),
         state: normalize_wit_state(&string_field(fields, "System.State").unwrap_or_default()),
         updated_at: string_field(fields, "System.ChangedDate")
             .or_else(|| string_field(fields, "System.CreatedDate"))
@@ -1424,6 +1473,18 @@ fn normalize_wit_state(state: &str) -> String {
     }
 }
 
+/// Web URL of a work item; the project segment is optional because the
+/// org-level `_workitems` route resolves ids across projects.
+pub(crate) fn work_item_web_url(base_url: &str, project: &str, id: i64) -> String {
+    let base = base_url.trim().trim_end_matches('/');
+    let project = project.trim();
+    if project.is_empty() {
+        format!("{base}/_workitems/edit/{id}")
+    } else {
+        format!("{base}/{}/_workitems/edit/{id}", encode_segment(project))
+    }
+}
+
 fn pr_link(row: &Value) -> Option<String> {
     row.get("_links")
         .and_then(|links| links.get("web"))
@@ -1565,9 +1626,9 @@ fn validate_repo(repo: &str) -> Result<String, String> {
 
 // ---- HTTP ----
 
-struct AzureResponse {
-    value: Value,
-    truncated: bool,
+pub(crate) struct AzureResponse {
+    pub(crate) value: Value,
+    pub(crate) truncated: bool,
 }
 
 fn basic_auth(token: &str) -> String {
@@ -1575,7 +1636,7 @@ fn basic_auth(token: &str) -> String {
     format!("Basic {encoded}")
 }
 
-fn azure_get(config: &AzureDevOpsConfig, path: &str) -> Result<AzureResponse, String> {
+pub(crate) fn azure_get(config: &AzureDevOpsConfig, path: &str) -> Result<AzureResponse, String> {
     let url = format!("{}{}", config.url.trim_end_matches('/'), path);
     let agent = azure_agent();
     read_azure_response(
@@ -1588,7 +1649,7 @@ fn azure_get(config: &AzureDevOpsConfig, path: &str) -> Result<AzureResponse, St
     )
 }
 
-fn azure_post_json(
+pub(crate) fn azure_post_json(
     config: &AzureDevOpsConfig,
     path: &str,
     body: Value,
@@ -1605,6 +1666,64 @@ fn azure_post_json(
             .set("User-Agent", USER_AGENT)
             .send_string(&payload),
     )
+}
+
+/// GET that treats 404 as "absent" (e.g. a team without a board for a level)
+/// instead of the generic "did not find that item" error.
+pub(crate) fn azure_get_optional(
+    config: &AzureDevOpsConfig,
+    path: &str,
+) -> Result<Option<AzureResponse>, String> {
+    let url = format!("{}{}", config.url.trim_end_matches('/'), path);
+    let result = azure_agent()
+        .get(&url)
+        .set("Authorization", &basic_auth(&config.token))
+        .set("Accept", "application/json")
+        .set("User-Agent", USER_AGENT)
+        .call();
+    if matches!(result, Err(ureq::Error::Status(404, _))) {
+        return Ok(None);
+    }
+    read_azure_response(result).map(Some)
+}
+
+/// Work item updates use JSON Patch. Auth failures get a write-specific
+/// message because a read-only PAT passes every list call.
+pub(crate) fn azure_patch_json_patch(
+    config: &AzureDevOpsConfig,
+    path: &str,
+    ops: &[Value],
+) -> Result<AzureResponse, String> {
+    let url = format!("{}{}", config.url.trim_end_matches('/'), path);
+    let payload = serde_json::to_string(ops).map_err(|error| error.to_string())?;
+    let result = azure_agent()
+        .request("PATCH", &url)
+        .set("Authorization", &basic_auth(&config.token))
+        .set("Accept", "application/json")
+        .set("Content-Type", "application/json-patch+json")
+        .set("User-Agent", USER_AGENT)
+        .send_string(&payload);
+    match result {
+        Err(ureq::Error::Status(status @ (401 | 403), response)) => {
+            let body = response.into_string().unwrap_or_default();
+            Err(azure_write_http_error(status, &body))
+        }
+        other => read_azure_response(other),
+    }
+}
+
+fn azure_write_http_error(status: u16, body: &str) -> String {
+    const REFUSED: &str = "Azure DevOps refused the update. Use a personal access token with the Work Items (Read & write) scope.";
+    if status == 403 {
+        if let Some(message) = serde_json::from_str::<Value>(body)
+            .ok()
+            .and_then(|value| string_field(&value, "message"))
+            .filter(|message| !message.is_empty())
+        {
+            return message;
+        }
+    }
+    REFUSED.into()
 }
 
 fn azure_current_user_id(config: &AzureDevOpsConfig) -> Result<String, String> {
@@ -1721,7 +1840,7 @@ fn azure_http_error(status: u16, body: &str) -> String {
     message.unwrap_or_else(|| format!("Azure DevOps request failed ({status})"))
 }
 
-fn string_field(value: &Value, key: &str) -> Option<String> {
+pub(crate) fn string_field(value: &Value, key: &str) -> Option<String> {
     value
         .get(key)
         .and_then(Value::as_str)
@@ -1815,7 +1934,7 @@ fn canonical_org_key(url: &str) -> Option<String> {
     Some(normalized.to_ascii_lowercase())
 }
 
-fn encode_segment(value: &str) -> String {
+pub(crate) fn encode_segment(value: &str) -> String {
     let mut encoded = String::new();
     for byte in value.as_bytes() {
         if byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'_' | b'.' | b'~') {
@@ -2025,7 +2144,7 @@ fn read_config(app: &AppHandle) -> Result<Option<AzureDevOpsConfig>, String> {
     }
 }
 
-fn require_config(app: &AppHandle) -> Result<AzureDevOpsConfig, String> {
+pub(crate) fn require_config(app: &AppHandle) -> Result<AzureDevOpsConfig, String> {
     read_config(app)?.ok_or_else(|| "Connect Azure DevOps in Settings".to_string())
 }
 
@@ -2243,13 +2362,67 @@ mod tests {
             },
             "_links": { "html": { "href": "https://dev.azure.com/acme/_workitems/edit/193" } }
         });
-        let item = parse_wit(&row).unwrap();
+        let item = parse_wit(&row, "https://dev.azure.com/acme").unwrap();
         assert_eq!(item.kind, "issue");
         assert_eq!(item.number, 193);
         assert_eq!(item.state, "open");
         assert_eq!(item.repo, "platform");
         assert_eq!(item.labels.len(), 2);
         assert_eq!(item.assignees[0].login, "Maya");
+    }
+
+    #[test]
+    fn wit_batch_path_requests_fields_without_expand() {
+        let path = wit_batch_path(&[193, 211]);
+        assert!(path.starts_with("/_apis/wit/workitems?ids=193,211&fields=System.Id,"));
+        assert!(path.contains("System.TeamProject"));
+        assert!(path.contains("&errorPolicy=omit"));
+        assert!(path.ends_with("&api-version=7.1"));
+        assert!(!path.contains("$expand"));
+    }
+
+    #[test]
+    fn parse_wit_builds_edit_url_without_links() {
+        let row = json!({
+            "id": 193,
+            "fields": {
+                "System.Title": "Flutter login",
+                "System.State": "Active",
+                "System.TeamProject": "TI Banese"
+            }
+        });
+        let item = parse_wit(&row, "https://dev.azure.com/BaneseAgile").unwrap();
+        assert_eq!(
+            item.url,
+            "https://dev.azure.com/BaneseAgile/TI%20Banese/_workitems/edit/193"
+        );
+        assert_eq!(item.repo, "TI Banese");
+    }
+
+    #[test]
+    fn parse_wit_skips_null_rows() {
+        let rows = [
+            Value::Null,
+            json!({ "id": 7, "fields": { "System.Title": "Kept" } }),
+        ];
+        let items: Vec<AzureDevOpsWorkItem> = rows
+            .iter()
+            .filter_map(|row| parse_wit(row, "https://dev.azure.com/acme"))
+            .collect();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].url, "https://dev.azure.com/acme/_workitems/edit/7");
+    }
+
+    #[test]
+    fn work_item_web_url_handles_empty_project() {
+        assert_eq!(
+            work_item_web_url("https://dev.azure.com/acme", "", 5),
+            "https://dev.azure.com/acme/_workitems/edit/5"
+        );
+        assert_eq!(
+            work_item_web_url("https://dev.azure.com/acme/", "p", 5),
+            "https://dev.azure.com/acme/p/_workitems/edit/5"
+        );
     }
 
     #[test]
@@ -2416,5 +2589,23 @@ mod tests {
         assert_eq!(percent_decode("my%20project"), "my project");
         // Malformed sequences pass through untouched.
         assert_eq!(percent_decode("100%"), "100%");
+    }
+
+    #[test]
+    fn parses_projects_sorted_and_skips_incomplete_rows() {
+        let projects = parse_projects(&json!({ "value": [
+            { "id": "2", "name": "Mobile Desty" },
+            { "id": "1", "name": "Mobile Banese" },
+            { "id": "", "name": "No id" },
+            { "id": "3", "name": "" }
+        ]}));
+        assert_eq!(
+            projects
+                .iter()
+                .map(|project| project.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Mobile Banese", "Mobile Desty"]
+        );
+        assert!(parse_projects(&json!({})).is_empty());
     }
 }

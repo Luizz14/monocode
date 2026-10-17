@@ -648,6 +648,7 @@ import {
 import { useQuickComposerLaunches } from "../features/quick-composer/hooks/useQuickComposerLaunches";
 import type { QuickLaunch } from "../features/quick-composer/model/quickComposer";
 import { claimInboxAutomationRuns } from "../features/automations/model/automationEvents";
+import { usePipelinesAvailable } from "../features/pipelines/hooks/usePipelines";
 import {
   SECOND_OPINION_TITLE,
   buildSecondOpinionRequest,
@@ -825,10 +826,24 @@ const NotesView = lazySurface(
   },
   { suspense: false },
 );
+const PipelinesView = lazySurface(
+  async () => {
+    const module = await import("../features/pipelines/ui/PipelinesView");
+    return { default: module.PipelinesView };
+  },
+  { suspense: false },
+);
 const AutomationsView = lazySurface(
   async () => {
     const module = await import("../features/automations/ui/AutomationsView");
     return { default: module.AutomationsView };
+  },
+  { suspense: false },
+);
+const BoardView = lazySurface(
+  async () => {
+    const module = await import("../features/boards/ui/BoardView");
+    return { default: module.BoardView };
   },
   { suspense: false },
 );
@@ -1241,7 +1256,10 @@ function Workspace({
     useState<InboxSessionPortal | null>(null);
   const openingInboxSessions = useRef(new Map<string, Promise<string>>());
   const [notesViewOpen, setNotesViewOpen] = useState(false);
+  const [pipelinesViewOpen, setPipelinesViewOpen] = useState(false);
+  const pipelinesAvailable = usePipelinesAvailable();
   const [automationsViewOpen, setAutomationsViewOpen] = useState(false);
+  const [boardsViewOpen, setBoardsViewOpen] = useState(false);
   const [inspectedWorkerId, setInspectedWorkerId] = useState<string | null>(
     null,
   );
@@ -1271,9 +1289,11 @@ function Workspace({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsReturnViewRef = useRef({
     search: false,
+    pipelines: false,
     inbox: false,
     notes: false,
     automations: false,
+    boards: false,
   });
   const [updateNotice, setUpdateNotice] = useState(installedUpdate);
   const [whatsNewVersion, setWhatsNewVersion] = useState<string | null>(null);
@@ -1494,32 +1514,42 @@ function Workspace({
   foregroundSurfaceRef.current = {
     workspaceVisible:
       !searchViewOpen &&
+      !pipelinesViewOpen &&
       !inboxViewOpen &&
       !notesViewOpen &&
       !automationsViewOpen &&
+      !boardsViewOpen &&
       !settingsOpen &&
       !monoViewId,
     standaloneSessionId: inboxViewOpen
       ? inboxAskPortal?.sessionId
       : !searchViewOpen &&
+          !pipelinesViewOpen &&
           !notesViewOpen &&
           !automationsViewOpen &&
+          !boardsViewOpen &&
           !settingsOpen
         ? (monoViewId ?? undefined)
         : undefined,
     sideSessionId:
       !inboxViewOpen &&
+      !pipelinesViewOpen &&
       !searchViewOpen &&
       !notesViewOpen &&
       !automationsViewOpen &&
+      !boardsViewOpen &&
       !settingsOpen
         ? shownMonoSessionId
         : undefined,
   };
   const notesViewOpenRef = useRef(notesViewOpen);
   notesViewOpenRef.current = notesViewOpen;
+  const pipelinesViewOpenRef = useRef(pipelinesViewOpen);
+  pipelinesViewOpenRef.current = pipelinesViewOpen;
   const automationsViewOpenRef = useRef(automationsViewOpen);
   automationsViewOpenRef.current = automationsViewOpen;
+  const boardsViewOpenRef = useRef(boardsViewOpen);
+  boardsViewOpenRef.current = boardsViewOpen;
   const settingsOpenRef = useRef(settingsOpen);
   settingsOpenRef.current = settingsOpen;
   const sessionNavigationIdsRef = useRef<readonly string[]>([]);
@@ -1558,6 +1588,7 @@ function Workspace({
         LinkedWorkItemPanel.preload,
         AutomationsView.preload,
         listAutomations,
+        BoardView.preload,
         ...(notesEnabled ? [NotesView.preload, loadNotes] : []),
         // The first code block otherwise compiles its grammar on arrival.
         warmCodeHighlighting,
@@ -2209,9 +2240,11 @@ function Workspace({
             document.activeElement === document.body &&
             !projectTerminalFocusedRef.current &&
             !searchViewOpenRef.current &&
+            !pipelinesViewOpenRef.current &&
             !inboxViewOpenRef.current &&
             !notesViewOpenRef.current &&
             !automationsViewOpenRef.current &&
+            !boardsViewOpenRef.current &&
             !settingsOpenRef.current
           ) {
             setComposerFocused(true);
@@ -2248,8 +2281,10 @@ function Workspace({
     inboxAskPortal?.sessionId,
     shownMonoSessionId,
     searchViewOpen,
+    pipelinesViewOpen,
     notesViewOpen,
     automationsViewOpen,
+    boardsViewOpen,
     settingsOpen,
     flushForegroundHarnessEvents,
   ]);
@@ -2745,9 +2780,11 @@ function Workspace({
 
   const onNew = useCallback(() => {
     setSearchViewOpen(false);
+    setPipelinesViewOpen(false);
     setInboxViewOpen(false);
     setNotesViewOpen(false);
     setAutomationsViewOpen(false);
+    setBoardsViewOpen(false);
     const cwd = sidebarCwd;
     const session = newWorkspaceSession(cwd, sessionDefaults?.runtimeMode);
     const tab = newTab(session.id);
@@ -2761,9 +2798,11 @@ function Workspace({
   const onSelectRemoteSession = useCallback(
     (project: string, remoteSessionId: string) => {
       setSearchViewOpen(false);
+      setPipelinesViewOpen(false);
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardsViewOpen(false);
       const existing = findRemoteSessionTab(
         tabsRef.current,
         sessionsRef.current,
@@ -2789,9 +2828,11 @@ function Workspace({
   const onStartInboxItem = useCallback(
     async (item: InboxItem, body?: string) => {
       const start = (description?: string) => {
+        setPipelinesViewOpen(false);
         setInboxViewOpen(false);
         setNotesViewOpen(false);
         setAutomationsViewOpen(false);
+        setBoardsViewOpen(false);
         const cwd =
           item.projectPath || active?.cwd || sessionDefaults?.cwd || projectCwd;
         setSidebarTab("sessions", cwd);
@@ -2828,9 +2869,11 @@ function Workspace({
     (card: NoteComposerCard) => {
       if (!card.id) return;
       setSearchViewOpen(false);
+      setPipelinesViewOpen(false);
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardsViewOpen(false);
       const cwd =
         (card.sourceCwd && looksLikeProject(card.sourceCwd)
           ? card.sourceCwd
@@ -4730,9 +4773,11 @@ function Workspace({
       workspaceNavigation.cancel();
       const request = ++monoViewRequest.current;
       setSearchViewOpen(false);
+      setPipelinesViewOpen(false);
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardsViewOpen(false);
       lastMonoIdRef.current = monoId;
       const session = await ensureMonoSession(monoId, {
         home: homeDir,
@@ -4967,9 +5012,11 @@ function Workspace({
       if (!session)
         throw new Error("This conversation is no longer available.");
       setSearchViewOpen(false);
+      setPipelinesViewOpen(false);
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardsViewOpen(false);
       setSettingsOpen(false);
       setFilePickerOpen(false);
       setSidebarTab("sessions", session.cwd);
@@ -5569,9 +5616,11 @@ function Workspace({
           surfaceOpen: Boolean(
             monoViewIdRef.current ||
             searchViewOpenRef.current ||
+            pipelinesViewOpenRef.current ||
             inboxViewOpenRef.current ||
             notesViewOpenRef.current ||
             automationsViewOpenRef.current ||
+            boardsViewOpenRef.current ||
             settingsOpenRef.current ||
             filePickerOpenRef.current ||
             whatsNewVersionRef.current,
@@ -6143,9 +6192,11 @@ function Workspace({
       // meant cancelling a folder picker shut whatever the user had open.
       // Nothing below opens a project without also leaving one of these views.
       setSearchViewOpen(false);
+      setPipelinesViewOpen(false);
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardsViewOpen(false);
 
       // At most one folder can take the blank session, and it keeps the
       // retargeting rules `onCwdChange` already owns.
@@ -8522,9 +8573,11 @@ function Workspace({
 
         if (reveal) {
           setSearchViewOpen(false);
+          setPipelinesViewOpen(false);
           setInboxViewOpen(false);
           setNotesViewOpen(false);
           setAutomationsViewOpen(false);
+          setBoardsViewOpen(false);
           setSidebarTab("sessions", session.cwd);
         }
 
@@ -8668,9 +8721,11 @@ function Workspace({
             setActiveTabId(id);
             setComposerFocused(false);
             setSearchViewOpen(false);
+            setPipelinesViewOpen(false);
             setInboxViewOpen(false);
             setNotesViewOpen(false);
             setAutomationsViewOpen(false);
+            setBoardsViewOpen(false);
             setSidebarTab("sessions", cwd);
           },
           submit: (id, text, attachments, options) =>
@@ -11360,9 +11415,11 @@ function Workspace({
   const onSelectLiveAgent = useCallback(
     (sessionId: string) => {
       setSearchViewOpen(false);
+      setPipelinesViewOpen(false);
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardsViewOpen(false);
       onOpenApprovalSession(sessionId);
     },
     [onOpenApprovalSession],
@@ -11510,18 +11567,22 @@ function Workspace({
 
   const onGoToFile = useCallback(() => {
     setSearchViewOpen(false);
+    setPipelinesViewOpen(false);
     setInboxViewOpen(false);
     setNotesViewOpen(false);
     setAutomationsViewOpen(false);
+    setBoardsViewOpen(false);
     setFilePickerInitialQuery("");
     setFilePickerResetToken((token) => token + 1);
     setFilePickerOpen(true);
   }, []);
   const onOpenCommandPalette = useCallback(() => {
     setSearchViewOpen(false);
+    setPipelinesViewOpen(false);
     setInboxViewOpen(false);
     setNotesViewOpen(false);
     setAutomationsViewOpen(false);
+    setBoardsViewOpen(false);
     setFilePickerInitialQuery(">");
     setFilePickerResetToken((token) => token + 1);
     setFilePickerOpen(true);
@@ -11535,9 +11596,11 @@ function Workspace({
 
   const onFindInProject = useCallback(() => {
     setSearchViewOpen(false);
+    setPipelinesViewOpen(false);
     setInboxViewOpen(false);
     setNotesViewOpen(false);
     setAutomationsViewOpen(false);
+    setBoardsViewOpen(false);
     setSidebarTab("files");
     setFilesSearchOpen(true);
     setSearchFocusToken((token) => token + 1);
@@ -11548,9 +11611,11 @@ function Workspace({
     startTransition(() => {
       setFilePickerOpen(false);
       setSettingsOpen(false);
+      setPipelinesViewOpen(false);
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardsViewOpen(false);
       setSearchViewOpen(true);
       setSearchViewFocusToken((token) => token + 1);
     });
@@ -11565,9 +11630,11 @@ function Workspace({
     startTransition(() => {
       setFilePickerOpen(false);
       setSettingsOpen(false);
+      setPipelinesViewOpen(false);
       setSearchViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardsViewOpen(false);
       setInboxViewOpen(true);
     });
   }, []);
@@ -11578,9 +11645,11 @@ function Workspace({
       linkedWorkItemPanelRequest.current = request;
       setFilePickerOpen(false);
       setSettingsOpen(false);
+      setPipelinesViewOpen(false);
       setSearchViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardsViewOpen(false);
       setInboxViewOpen(false);
       const cwd =
         sessionsRef.current.find((session) => session.id === sessionId)?.cwd ??
@@ -11681,9 +11750,11 @@ function Workspace({
     startTransition(() => {
       setFilePickerOpen(false);
       setSettingsOpen(false);
+      setPipelinesViewOpen(false);
       setSearchViewOpen(false);
       setInboxViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardsViewOpen(false);
       setNotesViewOpen(true);
     });
   }, []);
@@ -11692,7 +11763,7 @@ function Workspace({
     setNotesViewOpen(false);
   }, []);
 
-  const onOpenAutomations = useCallback(() => {
+  const onOpenPipelines = useCallback(() => {
     workspaceNavigation.cancel();
     startTransition(() => {
       setFilePickerOpen(false);
@@ -11700,6 +11771,26 @@ function Workspace({
       setSearchViewOpen(false);
       setInboxViewOpen(false);
       setNotesViewOpen(false);
+      setAutomationsViewOpen(false);
+      setBoardsViewOpen(false);
+      setPipelinesViewOpen(true);
+    });
+  }, []);
+
+  const onLeavePipelines = useCallback(() => {
+    setPipelinesViewOpen(false);
+  }, []);
+
+  const onOpenAutomations = useCallback(() => {
+    workspaceNavigation.cancel();
+    startTransition(() => {
+      setFilePickerOpen(false);
+      setSettingsOpen(false);
+      setPipelinesViewOpen(false);
+      setSearchViewOpen(false);
+      setInboxViewOpen(false);
+      setNotesViewOpen(false);
+      setBoardsViewOpen(false);
       setAutomationsViewOpen(true);
     });
   }, []);
@@ -11708,15 +11799,35 @@ function Workspace({
     setAutomationsViewOpen(false);
   }, []);
 
+  const onOpenBoards = useCallback(() => {
+    workspaceNavigation.cancel();
+    startTransition(() => {
+      setFilePickerOpen(false);
+      setSettingsOpen(false);
+      setPipelinesViewOpen(false);
+      setSearchViewOpen(false);
+      setInboxViewOpen(false);
+      setNotesViewOpen(false);
+      setAutomationsViewOpen(false);
+      setBoardsViewOpen(true);
+    });
+  }, []);
+
+  const onLeaveBoards = useCallback(() => {
+    setBoardsViewOpen(false);
+  }, []);
+
   const onOpenAutomationSession = useCallback(
     async (sessionId: string) => {
       const session = await ensureOpenSession(sessionId);
       if (!session)
         throw new Error("This conversation is no longer available.");
       setAutomationsViewOpen(false);
+      setBoardsViewOpen(false);
       setSearchViewOpen(false);
       setInboxViewOpen(false);
       setNotesViewOpen(false);
+      setPipelinesViewOpen(false);
       setSettingsOpen(false);
       setFilePickerOpen(false);
       setSidebarTab("sessions", session.cwd);
@@ -11733,17 +11844,21 @@ function Workspace({
       if (!settingsOpenRef.current) {
         settingsReturnViewRef.current = {
           search: searchViewOpenRef.current,
+          pipelines: pipelinesViewOpenRef.current,
           inbox: inboxViewOpenRef.current,
           notes: notesViewOpenRef.current,
           automations: automationsViewOpenRef.current,
+          boards: boardsViewOpenRef.current,
         };
       }
       startTransition(() => {
         setFilePickerOpen(false);
         setSearchViewOpen(false);
+        setPipelinesViewOpen(false);
         setInboxViewOpen(false);
         setNotesViewOpen(false);
         setAutomationsViewOpen(false);
+        setBoardsViewOpen(false);
         if (section) {
           setSettingsSection(section);
           saveSettingsSection(section);
@@ -11794,9 +11909,11 @@ function Workspace({
   const onCloseSettings = useCallback(() => {
     const returnView = settingsReturnViewRef.current;
     setSearchViewOpen(returnView.search);
+    setPipelinesViewOpen(returnView.pipelines);
     setInboxViewOpen(returnView.inbox);
     setNotesViewOpen(returnView.notes && loadNotesEnabled());
     setAutomationsViewOpen(returnView.automations);
+    setBoardsViewOpen(returnView.boards);
     setSettingsOpen(false);
   }, []);
 
@@ -11822,6 +11939,10 @@ function Workspace({
       setSearchViewOpen(false);
       return;
     }
+    if (pipelinesViewOpen) {
+      setPipelinesViewOpen(false);
+      return;
+    }
     if (inboxViewOpen) {
       setInboxViewOpen(false);
       return;
@@ -11832,6 +11953,10 @@ function Workspace({
     }
     if (automationsViewOpen) {
       setAutomationsViewOpen(false);
+      return;
+    }
+    if (boardsViewOpen) {
+      setBoardsViewOpen(false);
       return;
     }
     if (monoViewIdRef.current) {
@@ -11845,18 +11970,22 @@ function Workspace({
     onVisitBack,
     closeMonoView,
     searchViewOpen,
+    pipelinesViewOpen,
     settingsOpen,
     inboxViewOpen,
     notesViewOpen,
     automationsViewOpen,
+    boardsViewOpen,
   ]);
 
   const onRailForward = useCallback(() => {
     setSearchViewOpen(false);
     setSettingsOpen(false);
+    setPipelinesViewOpen(false);
     setInboxViewOpen(false);
     setNotesViewOpen(false);
     setAutomationsViewOpen(false);
+    setBoardsViewOpen(false);
     onVisitForward();
   }, [onVisitForward]);
 
@@ -12002,6 +12131,8 @@ function Workspace({
     onOpenSearch,
     onOpenInbox,
     onOpenNotes,
+    onOpenBoards,
+    onOpenPipelines,
     pickProject,
     onNewTerminal,
     onNewTerminalTab,
@@ -12034,6 +12165,8 @@ function Workspace({
     onOpenSearch,
     onOpenInbox,
     onOpenNotes,
+    onOpenBoards,
+    onOpenPipelines,
     pickProject,
     onNewTerminal,
     onNewTerminalTab,
@@ -12125,9 +12258,11 @@ function Workspace({
           );
           const surfaceOpen =
             searchViewOpenRef.current ||
+            pipelinesViewOpenRef.current ||
             inboxViewOpenRef.current ||
             notesViewOpenRef.current ||
             automationsViewOpenRef.current ||
+            boardsViewOpenRef.current ||
             settingsOpenRef.current ||
             filePickerOpenRef.current ||
             Boolean(whatsNewVersionRef.current);
@@ -12208,9 +12343,11 @@ function Workspace({
       }
       if (
         !searchViewOpenRef.current &&
+        !pipelinesViewOpenRef.current &&
         !inboxViewOpenRef.current &&
         !notesViewOpenRef.current &&
         !automationsViewOpenRef.current &&
+        !boardsViewOpenRef.current &&
         !(
           e.target instanceof Element &&
           e.target.closest("[data-session-drop], [data-agent-tab]")
@@ -12327,6 +12464,8 @@ function Workspace({
       listen("open_search", () => actions.current.onOpenSearch()),
       listen("open_inbox", () => actions.current.onOpenInbox()),
       listen("open_notes", () => actions.current.onOpenNotes()),
+      listen("open_boards", () => actions.current.onOpenBoards()),
+      listen("open_pipelines", () => actions.current.onOpenPipelines()),
       listen("open_settings", () => actions.current.openSettings()),
       listen("check_for_updates", () => {
         void runUpdateFlow(true);
@@ -12815,10 +12954,12 @@ function Workspace({
 
   const chromeSurfaceOpen =
     searchViewOpen ||
+    pipelinesViewOpen ||
     settingsOpen ||
     inboxViewOpen ||
     notesViewOpen ||
-    automationsViewOpen;
+    automationsViewOpen ||
+    boardsViewOpen;
   const compactProjectRail = collapsedProjectRailMode === "compact";
   const compactRailActive = compactProjectRail && !projectRailOpen;
   const compactTitleNavigation =
@@ -12936,10 +13077,12 @@ function Workspace({
                 !!monoViewId ||
                 tabVisitNav.canBack ||
                 searchViewOpen ||
+                pipelinesViewOpen ||
                 settingsOpen ||
                 inboxViewOpen ||
                 notesViewOpen ||
-                automationsViewOpen
+                automationsViewOpen ||
+                boardsViewOpen
               }
               canGoForward={tabVisitNav.canForward}
               onGoBack={onRailBack}
@@ -12971,14 +13114,22 @@ function Workspace({
               onNewTerminal={onNewTerminal}
               onSearch={onOpenSearch}
               onOpenInbox={onOpenInbox}
+              onOpenPipelines={
+                pipelinesAvailable || pipelinesViewOpen
+                  ? onOpenPipelines
+                  : undefined
+              }
               onOpenInboxItem={onOpenLinkedWorkItem}
               onOpenNotes={notesEnabled ? onOpenNotes : undefined}
               onOpenAutomations={onOpenAutomations}
+              onOpenBoards={onOpenBoards}
               onGoToFile={onGoToFile}
               searchActive={searchViewOpen}
+              pipelinesActive={pipelinesViewOpen}
               inboxActive={inboxViewOpen}
               notesActive={notesViewOpen}
               automationsActive={automationsViewOpen}
+              boardsActive={boardsViewOpen}
               notesEnabled={notesEnabled}
               projectRailOpen={projectRailOpen}
               compactProjectRail={compactProjectRail}
@@ -13002,26 +13153,32 @@ function Workspace({
               <div
                 className={
                   searchViewOpen ||
+                  pipelinesViewOpen ||
                   settingsOpen ||
                   inboxViewOpen ||
                   notesViewOpen ||
-                  automationsViewOpen
+                  automationsViewOpen ||
+                  boardsViewOpen
                     ? "hidden"
                     : "flex min-h-0 min-w-0 flex-1 flex-col"
                 }
                 aria-hidden={
                   searchViewOpen ||
-                  settingsOpen ||
-                  inboxViewOpen ||
-                  notesViewOpen ||
-                  automationsViewOpen
-                }
-                inert={
-                  searchViewOpen ||
+                  pipelinesViewOpen ||
                   settingsOpen ||
                   inboxViewOpen ||
                   notesViewOpen ||
                   automationsViewOpen ||
+                  boardsViewOpen
+                }
+                inert={
+                  searchViewOpen ||
+                  pipelinesViewOpen ||
+                  settingsOpen ||
+                  inboxViewOpen ||
+                  notesViewOpen ||
+                  automationsViewOpen ||
+                  boardsViewOpen ||
                   undefined
                 }
               >
@@ -13044,6 +13201,12 @@ function Workspace({
                     onSearch={onOpenSearch}
                     onOpenInbox={onOpenInbox}
                     onOpenNotes={notesEnabled ? onOpenNotes : undefined}
+                    onOpenBoards={onOpenBoards}
+                    onOpenPipelines={
+                      pipelinesAvailable || pipelinesViewOpen
+                        ? onOpenPipelines
+                        : undefined
+                    }
                     onZoomIn={() => {
                       const next = saveUiScale(zoomInUiScale(loadUiScale()));
                       void applyUiScale(next);
@@ -13247,10 +13410,12 @@ function Workspace({
                           recents={recents}
                           visible={
                             !searchViewOpen &&
+                            !pipelinesViewOpen &&
                             !settingsOpen &&
                             !inboxViewOpen &&
                             !notesViewOpen &&
                             !automationsViewOpen &&
+                            !boardsViewOpen &&
                             !monoViewId &&
                             activeLinkedWorkItemPanel?.sessionId ===
                               panel.sessionId
@@ -13340,6 +13505,15 @@ function Workspace({
                   onToggleSidebar={onToggleSidebar}
                 />
               ) : null}
+              {pipelinesViewOpen ? (
+                <PipelinesView
+                  besideRail={projectRailOpen || compactProjectRail}
+                  compactRail={compactRailActive}
+                  onClose={onLeavePipelines}
+                  onToggleSidebar={onToggleSidebar}
+                  onConnect={() => onOpenInboxIntegrations("azuredevops")}
+                />
+              ) : null}
               {automationsViewOpen ? (
                 <AutomationsView
                   besideRail={projectRailOpen || compactProjectRail}
@@ -13352,6 +13526,16 @@ function Workspace({
                     launchAutomation(automation, run, true)
                   }
                   onOpenSession={onOpenAutomationSession}
+                />
+              ) : null}
+              {boardsViewOpen ? (
+                <BoardView
+                  besideRail={projectRailOpen || compactProjectRail}
+                  compactRail={compactRailActive}
+                  onClose={onLeaveBoards}
+                  onToggleSidebar={onToggleSidebar}
+                  onOpenIntegrations={onOpenInboxIntegrations}
+                  onStart={onStartInboxItem}
                 />
               ) : null}
               {settingsOpen ? (
@@ -13383,9 +13567,11 @@ function Workspace({
                 />
               ) : null}
               {searchViewOpen ||
+              pipelinesViewOpen ||
               inboxViewOpen ||
               notesViewOpen ||
               automationsViewOpen ||
+              boardsViewOpen ||
               settingsOpen ||
               monoCovers ? null : (
                 <UsageFooter

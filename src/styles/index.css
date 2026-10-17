@@ -1601,6 +1601,50 @@ html.theme-light .explorer-file-drag-preview {
   opacity: 1 !important;
 }
 
+html.is-board-card-dragging,
+html.is-board-card-dragging * {
+  cursor: grabbing !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+html.is-board-card-dragging[data-board-drop="disallowed"],
+html.is-board-card-dragging[data-board-drop="disallowed"] * {
+  cursor: not-allowed !important;
+}
+
+/* A clone of the dragged card; the drag hook sets its width and transform. */
+.board-card-drag-preview {
+  position: fixed !important;
+  inset: 0 auto auto 0 !important;
+  z-index: 2147483647;
+  box-sizing: border-box;
+  max-width: min(272px, calc(100vw - 16px));
+  margin: 0 !important;
+  list-style: none;
+  pointer-events: none !important;
+  border-radius: 6px;
+  background: color-mix(
+    in srgb,
+    var(--color-background-base) 96%,
+    var(--color-content) 4%
+  );
+  box-shadow:
+    0 8px 24px rgb(0 0 0 / 24%),
+    0 1px 3px rgb(0 0 0 / 20%);
+  opacity: 0.94;
+  will-change: transform;
+  contain: layout paint;
+}
+
+html.theme-light .board-card-drag-preview {
+  background: var(--color-background-base);
+  box-shadow:
+    0 8px 24px rgb(0 0 0 / 12%),
+    0 1px 3px rgb(0 0 0 / 10%);
+  opacity: 1;
+}
+
 html.is-resizing,
 html.is-resizing * {
   cursor: col-resize !important;
