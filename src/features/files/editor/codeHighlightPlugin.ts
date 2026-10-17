@@ -3,14 +3,18 @@ import type {
   HighlightResult,
   ThemeInput,
 } from "@streamdown/code";
+import type { BundledLanguage } from "shiki";
+import type {
+  HighlightRequest,
+  HighlightWorkerReply,
+  HighlightWorkerRequest,
+  TokenLines,
+} from "./highlightEngine";
 import {
-  bundledLanguages,
-  bundledLanguagesInfo,
-  createHighlighter,
-  type BundledLanguage,
-  type GrammarState,
-} from "shiki";
-import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
+  SHIKI_LANGUAGE_IDS,
+  normalizeLanguage,
+  supportsLanguage,
+} from "./shikiLanguages";
 
 /**
  * `@streamdown/code` keeps every token result in a module-level Map that is
@@ -18,8 +22,15 @@ import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
  * so each partial version of every code block an agent wrote stayed in memory
  * for the life of the window. Its key (length plus the first and last 100
  * characters) also let different blocks share a result. This keeps the same
- * `CodeHighlighterPlugin` shape with a bounded LRU and an exact key, and loads
- * languages into one highlighter per theme pair instead of one per language.
+ * `CodeHighlighterPlugin` shape with a bounded LRU and an exact key.
+ *
+ * Tokenizing happens in a worker (`highlightEngine.ts` explains why). The
+ * worker answers in request order and sends back only the lines after the
+ * ones this side already holds from the previous answer, so a streaming fence
+ * keeps its complete lines' token arrays, and `HighlightedLine` keeps their
+ * elements. A worker that cannot start or crashes leaves fences as plain
+ * text: shipping the engine for this thread as well would double the grammar
+ * chunks on disk for a case module workers should never reach.
  *
  * Mounted blocks hold their tokens in component state, so eviction only means
  * a remounted block briefly shows plain text while it is highlighted again.
@@ -27,26 +38,141 @@ import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 const DEFAULT_THEMES: [ThemeInput, ThemeInput] = ["github-light", "github-dark"];
 const MAX_ENTRIES = 100;
 const MAX_CACHED_CHARS = 500_000;
+/** Compiled after boot. Plain-text fences highlight as JavaScript. */
+export const WARM_LANGUAGES: readonly string[] = [
+  "javascript",
+  "typescript",
+  "tsx",
+];
 
-type Highlighter = Awaited<ReturnType<typeof createHighlighter>>;
 type HighlightCallback = (result: HighlightResult) => void;
+
+export type HighlightBackend = {
+  /** Replies arrive in request order. */
+  send(message: HighlightWorkerRequest): Promise<HighlightWorkerReply>;
+  /** True when tokenizing never blocks the caller's thread. */
+  offThread: boolean;
+};
 
 export type BoundedCodePlugin = CodeHighlighterPlugin & {
   /** Number of token results currently cached. */
   cachedResults(): number;
+  /**
+   * Compiles grammars before their first fence, off the window's thread.
+   * Resolves at once when highlighting runs on this thread.
+   */
+  warmUp(languages?: readonly string[]): Promise<void>;
 };
 
-const engine = createJavaScriptRegexEngine({ forgiving: true });
-const aliases: Record<string, string> = Object.fromEntries(
-  bundledLanguagesInfo.flatMap((info) =>
-    (info.aliases ?? []).map((alias) => [alias, info.id]),
-  ),
-);
-const supported = new Set(Object.keys(bundledLanguages));
+/** Leaves code uncolored: one token per line, in the surrounding text color. */
+export function createPlainBackend(): HighlightBackend {
+  return {
+    send: (message) => {
+      if ("warm" in message) {
+        return Promise.resolve({ id: message.id, result: undefined });
+      }
+      const lines: TokenLines = [];
+      let offset = 0;
+      for (const line of message.request.code.split("\n")) {
+        lines.push([{ content: line, offset }]);
+        offset += line.length + 1;
+      }
+      return Promise.resolve({
+        id: message.id,
+        result: { reusedLines: 0, lines },
+      });
+    },
+    offThread: false,
+  };
+}
 
-function normalizeLanguage(language: string): string {
-  const lower = language.trim().toLowerCase();
-  return aliases[lower] ?? lower;
+/**
+ * Tokenizes in a worker. A worker that cannot start or crashes hands its
+ * unanswered requests, in order, to the plain backend, which answers from
+ * then on.
+ */
+export function createWorkerBackend(
+  createWorker: () => Worker,
+): HighlightBackend {
+  const pending = new Map<
+    number,
+    { message: HighlightWorkerRequest; resolve: (reply: HighlightWorkerReply) => void }
+  >();
+  let worker: Worker | null = null;
+  let fallback: HighlightBackend | null = null;
+
+  const failOver = (reason: unknown) => {
+    if (fallback) return;
+    console.error(
+      "[Code highlight] The highlight worker failed; code stays uncolored.",
+      reason,
+    );
+    worker?.terminate();
+    worker = null;
+    const plain = createPlainBackend();
+    fallback = plain;
+    const waiting = [...pending.values()];
+    pending.clear();
+    for (const { message, resolve } of waiting) {
+      void plain.send(message).then(resolve);
+    }
+  };
+
+  const start = (): Worker | null => {
+    try {
+      const created = createWorker();
+      created.onmessage = ({ data }: MessageEvent<HighlightWorkerReply>) => {
+        const entry = pending.get(data.id);
+        if (!entry) return;
+        pending.delete(data.id);
+        entry.resolve(data);
+      };
+      created.onerror = (event) => {
+        failOver(
+          typeof event === "object" && event && "message" in event
+            ? event.message
+            : event,
+        );
+      };
+      created.onmessageerror = (event) => failOver(event);
+      return created;
+    } catch (error) {
+      failOver(error);
+      return null;
+    }
+  };
+
+  return {
+    send(message) {
+      if (!fallback) worker ??= start();
+      if (fallback) return fallback.send(message);
+      return new Promise((resolve) => {
+        pending.set(message.id, { message, resolve });
+        worker!.postMessage(message);
+      });
+    },
+    offThread: true,
+  };
+}
+
+function defaultBackend(): HighlightBackend {
+  if (import.meta.env.MODE === "test") {
+    // Dead in the window's build, which keeps the engine out of it.
+    const inline = import("./highlightInlineBackend").then((mod) =>
+      mod.createInlineBackend(),
+    );
+    return {
+      send: (message) => inline.then((backend) => backend.send(message)),
+      offThread: false,
+    };
+  }
+  if (typeof Worker !== "function") return createPlainBackend();
+  return createWorkerBackend(
+    () =>
+      new Worker(new URL("./codeHighlight.worker.ts", import.meta.url), {
+        type: "module",
+      }),
+  );
 }
 
 function themeName(theme: ThemeInput): string {
@@ -58,37 +184,20 @@ export function createBoundedCodePlugin(
     themes?: [ThemeInput, ThemeInput];
     maxEntries?: number;
     maxChars?: number;
+    backend?: HighlightBackend;
   } = {},
 ): BoundedCodePlugin {
   const themes = options.themes ?? DEFAULT_THEMES;
   const maxEntries = options.maxEntries ?? MAX_ENTRIES;
   const maxChars = options.maxChars ?? MAX_CACHED_CHARS;
-  const highlighters = new Map<string, Promise<Highlighter>>();
+  const backend = options.backend ?? defaultBackend();
   const results = new Map<string, HighlightResult>();
   const pending = new Map<string, Set<HighlightCallback>>();
   let cachedChars = 0;
-  // Only the most recently highlighted fence needs a streaming checkpoint.
-  // Keep complete lines and their grammar state; the unfinished line must be
-  // tokenized again because its syntax can change as characters arrive.
-  let checkpoint:
-    | {
-        config: string;
-        source: string;
-        tokens: HighlightResult["tokens"];
-        state: GrammarState | undefined;
-      }
-    | undefined;
-
-  const highlighterFor = (pair: [ThemeInput, ThemeInput]) => {
-    const key = `${themeName(pair[0])}\u0000${themeName(pair[1])}`;
-    let highlighter = highlighters.get(key);
-    if (!highlighter) {
-      highlighter = createHighlighter({ themes: pair, langs: [], engine });
-      highlighters.set(key, highlighter);
-      highlighter.catch(() => highlighters.delete(key));
-    }
-    return highlighter;
-  };
+  let nextId = 0;
+  // The lines of the latest reply. The engine's checkpoint describes this
+  // same fence, so a reply may say to keep a prefix of these lines.
+  let lastLines: TokenLines = [];
 
   const remember = (key: string, result: HighlightResult) => {
     if (results.delete(key)) cachedChars -= key.length;
@@ -107,10 +216,21 @@ export function createBoundedCodePlugin(
   return {
     name: "shiki",
     type: "code-highlighter",
-    supportsLanguage: (language) => supported.has(normalizeLanguage(language)),
-    getSupportedLanguages: () => Array.from(supported) as BundledLanguage[],
+    supportsLanguage: (language) => supportsLanguage(language),
+    getSupportedLanguages: () => [...SHIKI_LANGUAGE_IDS] as BundledLanguage[],
     getThemes: () => themes,
     cachedResults: () => results.size,
+    warmUp: (languages = WARM_LANGUAGES) => {
+      if (!backend.offThread) return Promise.resolve();
+      return backend
+        .send({ id: ++nextId, warm: languages })
+        .then((reply) => {
+          if ("error" in reply) throw new Error(reply.error);
+        })
+        .catch((error: unknown) => {
+          console.error("[Code highlight] Failed to warm grammars:", error);
+        });
+    },
     highlight({ code, language, themes: pair }, callback) {
       const lang = normalizeLanguage(language);
       const names = [themeName(pair[0]), themeName(pair[1])] as const;
@@ -128,79 +248,39 @@ export function createBoundedCodePlugin(
         return null;
       }
       pending.set(key, new Set(callback ? [callback] : []));
-      void highlighterFor(pair)
-        .then(async (highlighter) => {
-          if (supported.has(lang) && !highlighter.getLoadedLanguages().includes(lang)) {
-            await highlighter.loadLanguage(lang as BundledLanguage);
-          }
-          const usable = highlighter.getLoadedLanguages().includes(lang)
-            ? lang
-            : "text";
-          const config = `${usable}\u0000${names[0]}\u0000${names[1]}`;
-          const previous =
-            checkpoint?.config === config && code.startsWith(checkpoint.source)
-              ? checkpoint
-              : undefined;
-          const offset = previous?.source.length ?? 0;
-          const boundary = code.lastIndexOf("\n") + 1;
-          const settings = {
-            lang: usable as BundledLanguage,
-            themes: { light: names[0], dark: names[1] },
+      const request: HighlightRequest = {
+        code,
+        language: lang,
+        themes: pair,
+        // Complete lines of the last fence; its unfinished last line is not
+        // one of them.
+        reuseLines: Math.max(0, lastLines.length - 1),
+        checkpointLimit: maxChars,
+      };
+      void backend
+        .send({ id: ++nextId, request })
+        .then((reply) => {
+          if ("error" in reply) throw new Error(reply.error);
+          const response = reply.result!;
+          const tokens =
+            response.reusedLines > 0
+              ? [...lastLines.slice(0, response.reusedLines), ...response.lines]
+              : response.lines;
+          lastLines = tokens;
+          const result: HighlightResult = {
+            fg: response.fg,
+            bg: response.bg,
+            themeName: response.themeName,
+            rootStyle: response.rootStyle,
+            tokens,
           };
-          let prefix = previous?.tokens ?? [];
-          let state = previous?.state;
-          if (boundary > offset) {
-            const lineEnd =
-              code[boundary - 2] === "\r" ? boundary - 2 : boundary - 1;
-            const complete = highlighter.codeToTokens(
-              code.slice(offset, lineEnd),
-              {
-                ...settings,
-                grammarState: state,
-              },
-            );
-            prefix = [
-              ...prefix,
-              ...complete.tokens.map((line) =>
-                line.map((token) => ({
-                  ...token,
-                  offset: token.offset + offset,
-                })),
-              ),
-            ];
-            state = complete.grammarState;
-          }
-          const tail = highlighter.codeToTokens(code.slice(boundary), {
-            ...settings,
-            grammarState: state,
-          });
-          const result = {
-            ...tail,
-            tokens: [
-              ...prefix,
-              ...tail.tokens.map((line) =>
-                line.map((token) => ({
-                  ...token,
-                  offset: token.offset + boundary,
-                })),
-              ),
-            ],
-          };
-          checkpoint =
-            boundary > 0 && boundary <= maxChars
-              ? {
-                  config,
-                  source: code.slice(0, boundary),
-                  tokens: prefix,
-                  state,
-                }
-              : undefined;
           remember(key, result);
           const callbacks = pending.get(key);
           pending.delete(key);
           callbacks?.forEach((notify) => notify(result));
         })
         .catch((error: unknown) => {
+          lastLines = [];
           pending.delete(key);
           console.error("[Code highlight] Failed to highlight code:", error);
         });
@@ -210,3 +290,8 @@ export function createBoundedCodePlugin(
 }
 
 export const boundedCode = createBoundedCodePlugin();
+
+/** Compiles the common grammars after boot, so the first fence colors at once. */
+export function warmCodeHighlighting(): Promise<void> {
+  return boundedCode.warmUp();
+}

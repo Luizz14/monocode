@@ -11,6 +11,9 @@ export default defineConfig(async ({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     clearScreen: false,
+    // Module workers, so the highlight worker can load grammars and themes
+    // as chunks on demand instead of inlining every one of them.
+    worker: { format: "es" },
     build: {
       rollupOptions: {
         // The quick composer panel loads its own page so it does not boot the

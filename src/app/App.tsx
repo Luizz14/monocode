@@ -661,6 +661,7 @@ import { SessionSurface } from "../features/sessions/ui/SessionSurface";
 import { ProjectTerminalDock } from "../features/terminal/ui/ProjectTerminalDock";
 import { lazySurface } from "../shared/ui/lazySurface";
 import { preloadNavigationWhenIdle } from "./model/preloadNavigation";
+import { warmCodeHighlighting } from "../features/files/editor/codeHighlightPlugin";
 import { requestTranscriptJump } from "../features/sessions/model/transcriptJump";
 import type { SettingsAnchor } from "../features/settings/ui/SettingsView";
 import {
@@ -1556,6 +1557,8 @@ function Workspace({
         AutomationsView.preload,
         listAutomations,
         ...(notesEnabled ? [NotesView.preload, loadNotes] : []),
+        // The first code block otherwise compiles its grammar on arrival.
+        warmCodeHighlighting,
       ]),
     [notesEnabled],
   );
