@@ -83,10 +83,9 @@ function dialogLayer(layer: number | undefined, inDialog: boolean): number {
 }
 
 const FRAME = "isolate overflow-hidden border border-content/10 shadow-xl";
-/* Outlines paint above the frame's children, so the inset line stays on top
-   of the glass. */
-const FRAME_INSET_LINE =
-  "isolate overflow-hidden outline-1 -outline-offset-2 outline-content/10 shadow-xl";
+/* The inset line is its own layer above the glass (see `insetLine`), so the
+   frame itself draws no line. */
+const FRAME_INSET_LINE = "isolate overflow-hidden shadow-xl";
 
 /** Which corner the open animation grows from, so it reads as anchored. */
 function origin(side: PopoverSide, align: PopoverAlign): string {
@@ -397,6 +396,16 @@ function WebPopover({
       >
         {children}
       </div>
+      {insetLine && !bare ? (
+        // Not an outline on the frame: in WebKit the glass's backdrop filter
+        // gets its own compositing layer, painted over the frame's outline.
+        // A later sibling stacked above the glass stays on top.
+        <div
+          aria-hidden="true"
+          data-popover-line
+          className="pointer-events-none absolute inset-0 z-[2] rounded-[inherit] outline-1 -outline-offset-2 outline-content/10"
+        />
+      ) : null}
     </div>,
     document.body,
   );

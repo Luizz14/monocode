@@ -215,3 +215,53 @@ test("keeps the fill's end under the knob's center through a drag", async ({
   // The knob really moved through the rail, not just between two dots.
   expect(Math.max(...centers) - Math.min(...centers)).toBeGreaterThan(200);
 });
+
+test("shows the panel's inset line over composited glass", async ({
+  page,
+}, testInfo) => {
+  // The same path as the app: the docked composer's model chip opens the
+  // panel. A real backdrop filter gets its own compositing layer in WebKit,
+  // which this headless build never draws, so force one, with a dense tint
+  // that would hide any line painted beneath it.
+  await page.goto("/tests/browser/model-slider.html?view=active");
+  await page.addStyleTag({
+    content:
+      ".popover-backdrop{will-change:transform;transform:translateZ(0);background:rgb(40 40 40 / 0.9)!important}",
+  });
+  await page.locator("[data-model-picker-trigger]").click();
+  const panel = page.locator("[data-model-slider]");
+  await expect(panel).toBeVisible();
+  await page.waitForTimeout(600);
+  const frame = await panel.evaluate((el) => {
+    let node: HTMLElement = el as HTMLElement;
+    while (node.parentElement && node.parentElement !== document.body) {
+      node = node.parentElement;
+    }
+    const rect = node.getBoundingClientRect();
+    return { x: rect.x, y: rect.y, width: rect.width };
+  });
+  const shot = await page.screenshot({
+    clip: { x: frame.x + frame.width / 2 - 2, y: frame.y, width: 4, height: 6 },
+  });
+  // Red channel down the middle of the panel's top edge: row 1 is the line,
+  // 1-2px inside the edge; rows 0 and 3 are the glass around it.
+  const column = await page.evaluate(async (base64) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${base64}`;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext("2d")!;
+    context.drawImage(image, 0, 0);
+    return Array.from(
+      { length: image.height },
+      (_, row) => context.getImageData(2, row, 1, 1).data[0],
+    );
+  }, shot.toString("base64"));
+  const note = `top edge, red channel by row: ${column.join(", ")}`;
+  testInfo.annotations.push({ type: "inset line", description: note });
+  console.log(note);
+  expect(column[1] - column[0]).toBeGreaterThan(10);
+  expect(column[1] - column[3]).toBeGreaterThan(10);
+});
