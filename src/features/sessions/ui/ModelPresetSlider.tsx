@@ -226,19 +226,24 @@ export function ModelPresetSlider({
   const pointerX = (event: ReactPointerEvent<HTMLDivElement>) =>
     event.clientX - (track.current?.getBoundingClientRect().left ?? 0);
 
-  const moveTo = (next: number) => {
+  /**
+   * Moves the drag onto step `next`. Only a drag ticks the trackpad: a
+   * press that jumps to a dot, like the arrow keys, changes the step
+   * without one, so a single click never vibrates.
+   */
+  const moveTo = (next: number, tick: boolean) => {
     const current = drag.current;
     if (!current || next === current.index) return;
     current.index = next;
-    if (haptics) performHaptic("levelChange");
+    if (tick && haptics) performHaptic("levelChange");
     setDragIndex(next);
   };
 
-  const follow = (x: number) => {
+  const follow = (x: number, tick: boolean) => {
     const current = drag.current;
     if (!current) return;
     const { index: next, center } = dragStepAt(x, current.index, count);
-    moveTo(next);
+    moveTo(next, tick);
     // Reduced motion skips the glide: the knob only jumps from step to step.
     const target =
       prefersReducedMotion() && current.index >= 0
@@ -274,13 +279,13 @@ export function ModelPresetSlider({
     // jumps to the nearest dot.
     const onKnob =
       index >= 0 && Math.abs(x - stepCenter(index, count)) <= KNOB_HALF;
-    if (!onKnob) moveTo(stepAt(x, count));
-    follow(x);
+    if (!onKnob) moveTo(stepAt(x, count), false);
+    follow(x, false);
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (drag.current?.pointerId !== event.pointerId) return;
-    follow(pointerX(event));
+    follow(pointerX(event), true);
   };
 
   const onPointerEnd = (

@@ -292,13 +292,31 @@ describe("ModelPresetSlider", () => {
       expect(onCommit).not.toHaveBeenCalled();
     });
 
-    it("jumps to a clicked dot", () => {
+    it("jumps to a clicked dot without a tick", () => {
       const { track, onCommit } = render();
       pointer(track, "pointerdown", stepCenter(5, 6));
       expect(panel().dataset.effortTone).toBe("ultrathink");
-      expect(haptic).toHaveBeenCalledTimes(1);
       pointer(track, "pointerup", stepCenter(5, 6));
       expect(onCommit).toHaveBeenCalledWith(5);
+      expect(haptic).not.toHaveBeenCalled();
+    });
+
+    it("does not tick for a click on the rail between dots", () => {
+      const { track, onCommit } = render();
+      pointer(track, "pointerdown", stepCenter(4, 6) - 24);
+      pointer(track, "pointerup", stepCenter(4, 6) - 24);
+      expect(onCommit).toHaveBeenCalledWith(4);
+      expect(haptic).not.toHaveBeenCalled();
+    });
+
+    it("ticks once per step a drag crosses after a jumping press", () => {
+      const { track } = render();
+      pointer(track, "pointerdown", stepCenter(0, 6));
+      expect(haptic).not.toHaveBeenCalled();
+      pointer(track, "pointermove", stepCenter(1, 6));
+      pointer(track, "pointermove", stepCenter(1, 6) + 3);
+      pointer(track, "pointermove", stepCenter(2, 6));
+      expect(haptic).toHaveBeenCalledTimes(2);
     });
 
     it("clamps past either end of the rail", () => {
