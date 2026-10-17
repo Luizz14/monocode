@@ -310,6 +310,34 @@ describe("ModelPresetSlider", () => {
     });
   });
 
+  it("draws each level's icon and color, and the step being dragged over", () => {
+    const { track } = render({ level: "high" });
+    const icon = () =>
+      panel().querySelector<SVGElement>("svg[data-effort-icon]")!.dataset
+        .effortIcon;
+    expect(panel().dataset.effortLevel).toBe("high");
+    expect(icon()).toBe("high");
+    // The level stays in words beside the icon.
+    expect(panel().textContent).toContain("High");
+
+    pointer(track, "pointerdown", stepCenter(2, 6));
+    pointer(track, "pointermove", stepCenter(0, 6));
+    expect(panel().dataset.effortLevel).toBe("low");
+    expect(icon()).toBe("low");
+    expect(panel().textContent).toContain("Low");
+    pointer(track, "pointercancel", stepCenter(0, 6));
+    expect(icon()).toBe("high");
+  });
+
+  it("keeps a neutral globe outside the ladder", () => {
+    render({ index: -1, effortLabel: "Minimal" });
+    expect(panel().hasAttribute("data-effort-level")).toBe(false);
+    expect(
+      panel().querySelector<SVGElement>("svg[data-effort-icon]")!.dataset
+        .effortIcon,
+    ).toBe("none");
+  });
+
   it("lights the rail for the current top level at rest", () => {
     render({ index: 3, effortLabel: "Max", tone: "max" });
     expect(panel().dataset.effortTone).toBe("max");

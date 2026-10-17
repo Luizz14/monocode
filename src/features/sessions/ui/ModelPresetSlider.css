@@ -1,11 +1,79 @@
-/* The composer's model panel. Geometry and colors follow the design: a 342px
-   rail with 6px dots, a 36px knob that overhangs it by 5px, and a fill that
-   runs to the knob's center. Max, Ultracode, and Ultrathink swap the green
-   for the effort menu's tones and replay its tile shimmer on the rail. */
+/* The composer's model panel. Geometry follows the design: a 342px rail with
+   6px dots, a 36px knob that overhangs it by 5px, and a fill that runs to the
+   knob's center. Each effort level brings its own icon and color; Max,
+   Ultracode, and Ultrathink also replay the effort menu's tile shimmer. */
+
+/* Effort level colors, read by the slider and the composer's model chip.
+   Medium is the design's green. Low and High borrow the app's link and
+   heading tokens, which already have light-theme values; the rest pair a
+   dark-theme color with a deeper one for light surfaces. Max, Ultracode, and
+   Ultrathink keep the effort menu's colors. */
+[data-effort-level="low"] {
+  --effort-level-color: var(--link-color);
+}
+
+[data-effort-level="medium"] {
+  --effort-level-color: color(display-p3 0.627 0.756 0.437);
+  --effort-level-soft: color(display-p3 0.779 0.87 0.657);
+}
+
+[data-effort-level="high"] {
+  --effort-level-color: var(--color-markdown-heading);
+}
+
+[data-effort-level="xhigh"] {
+  --effort-level-color: #fb923c;
+}
+
+[data-effort-level="max"] {
+  --effort-level-color: #f4b942;
+}
+
+[data-effort-level="ultracode"] {
+  --effort-level-color: #a855f7;
+}
+
+[data-effort-level="ultrathink"] {
+  --effort-level-color: #e879f9;
+}
+
+html.theme-light [data-effort-level="medium"] {
+  --effort-level-color: color(display-p3 0.36 0.5 0.18);
+  --effort-level-soft: color(display-p3 0.62 0.74 0.45);
+}
+
+html.theme-light [data-effort-level="xhigh"] {
+  --effort-level-color: #c2410c;
+}
+
+html.theme-light [data-effort-level="max"] {
+  --effort-level-color: #b45309;
+}
+
+html.theme-light [data-effort-level="ultracode"] {
+  --effort-level-color: #7e22ce;
+}
+
+html.theme-light [data-effort-level="ultrathink"] {
+  --effort-level-color: #c026d3;
+}
+
+/* A level icon or label in the composer's model chip. */
+.effort-level-mark {
+  color: var(--effort-level-color, currentColor);
+}
 
 .model-slider {
-  --slider-accent: color(display-p3 0.627 0.756 0.437);
-  --slider-accent-soft: color(display-p3 0.779 0.87 0.657);
+  /* Outside the ladder (a model with no effort, a provider's own level) the
+     rail stays neutral. */
+  --slider-accent: var(
+    --effort-level-color,
+    color-mix(in srgb, var(--color-content) 55%, transparent)
+  );
+  --slider-accent-soft: var(
+    --effort-level-soft,
+    color-mix(in srgb, var(--slider-accent) 55%, white)
+  );
   --slider-fill: var(--slider-accent);
   --slider-rail: color-mix(
     in srgb,
@@ -14,21 +82,16 @@
   );
 }
 
+/* The top three levels also run the tile shimmer in their color. */
 .model-slider[data-effort-tone="max"] {
-  --slider-accent: #f4b942;
-  --slider-accent-soft: color-mix(in srgb, #f4b942 55%, white);
   --codex-effort-color: #f4b942;
 }
 
 .model-slider[data-effort-tone="ultracode"] {
-  --slider-accent: #a855f7;
-  --slider-accent-soft: color-mix(in srgb, #a855f7 55%, white);
   --codex-effort-color: #a855f7;
 }
 
 .model-slider[data-effort-tone="ultrathink"] {
-  --slider-accent: #e879f9;
-  --slider-accent-soft: color-mix(in srgb, #e879f9 45%, white);
   --slider-fill: linear-gradient(
     90deg,
     #f87171,

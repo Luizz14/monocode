@@ -50,6 +50,8 @@ import { LAYER } from "../../../shared/lib/layers";
 import { HarnessIcon } from "./HarnessIcon";
 import { EffortTileShimmer } from "./EffortTileShimmer";
 import { ModelPresetSlider, warmSliderFonts } from "./ModelPresetSlider";
+import { EffortLevelIcon } from "./EffortLevelIcon";
+import { effortLevel } from "../model/effortLevels";
 import {
   currentStepIndex,
   effortTone,
@@ -448,6 +450,10 @@ export function ModelPicker({
   const currentEffortValue = currentEffortSetting
     ? settingValue(currentEffortSetting, values)
     : undefined;
+  const currentLevel = effortLevel(currentEffortValue);
+  // The composer's chip marks the effort with its level's icon and color.
+  const chipLevel =
+    presetSlider && triggerEffortSetting ? currentLevel : undefined;
 
   useEffect(() => {
     if (presetSlider) warmSliderFonts();
@@ -807,6 +813,7 @@ export function ModelPicker({
         aria-expanded={open || panelVisible || recentMenu != null}
         aria-haspopup={hideSettings || sliderReady ? "dialog" : "menu"}
         data-model-picker-trigger
+        data-effort-level={chipLevel}
         onMouseDown={(event) => event.preventDefault()}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -843,10 +850,19 @@ export function ModelPicker({
             variant === "ghost" ? "font-semibold" : ""
           } ${labelClassName}`}
         />
+        {!triggerLabel && triggerEffortLabel && chipLevel ? (
+          <EffortLevelIcon
+            level={chipLevel}
+            size={12}
+            className={`effort-level-mark shrink-0 ${labelClassName}`}
+          />
+        ) : null}
         {!triggerLabel && triggerEffortLabel ? (
           <RollText
             text={triggerEffortLabel}
-            className={`shrink-0 text-content/50 ${pillSized ? "text-[11px]" : ""} ${
+            className={`shrink-0 ${
+              chipLevel ? "effort-level-mark" : "text-content/50"
+            } ${pillSized ? "text-[11px]" : ""} ${
               variant === "ghost" ? "italic" : ""
             } ${labelClassName}`}
           />
@@ -883,6 +899,7 @@ export function ModelPicker({
                 ? settingValueLabel(currentEffortSetting, values)
                 : undefined
             }
+            level={currentLevel}
             tone={effortTone(currentEffortValue)}
             haptics={sliderHaptics}
             keyboard={panelByKeyboard}

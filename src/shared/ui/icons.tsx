@@ -106,6 +106,12 @@ import UngroupItemsIcon from "@hugeicons/core-free-icons/UngroupItemsIcon";
 import ViewIcon from "@hugeicons/core-free-icons/ViewIcon";
 import WholeWordIcon from "@hugeicons/core-free-icons/WholeWordIcon";
 import Wrench01Icon from "@hugeicons/core-free-icons/Wrench01Icon";
+import Comet01Icon from "@hugeicons/core-free-icons/Comet01Icon";
+import GalaxyIcon from "@hugeicons/core-free-icons/GalaxyIcon";
+import Moon01Icon from "@hugeicons/core-free-icons/Moon01Icon";
+import SaturnIcon from "@hugeicons/core-free-icons/SaturnIcon";
+import StarsIcon from "@hugeicons/core-free-icons/StarsIcon";
+import Sun03Icon from "@hugeicons/core-free-icons/Sun03Icon";
 import { forwardRef, type Ref } from "react";
 
 /** Props shared by every chrome icon. `icon` is filled in by the named wrappers. */
@@ -282,3 +288,19 @@ export const WholeWord = wrap(WholeWordIcon, "WholeWord");
 export const Wrench = wrap(Wrench01Icon, "Wrench");
 export const X = wrap(Cancel01Icon, "X");
 export const Zap = wrap(FlashIcon, "Zap");
+
+/** A glyph's raw elements, for an icon that paints its own strokes. */
+export type IconGlyph = IconSvgElement;
+
+/**
+ * Sky glyphs for the effort ladder (see `EffortLevelIcon`), as raw data so a
+ * level can stroke them with a gradient.
+ */
+export const SKY_GLYPHS = {
+  moon: Moon01Icon,
+  saturn: SaturnIcon,
+  sun: Sun03Icon,
+  stars: StarsIcon,
+  comet: Comet01Icon,
+  galaxy: GalaxyIcon,
+} satisfies Record<string, IconGlyph>;

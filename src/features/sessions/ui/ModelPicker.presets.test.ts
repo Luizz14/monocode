@@ -302,11 +302,37 @@ describe("model picker presets", () => {
     expect(trigger.className).not.toContain("bg-selection ");
     expect(trigger.className).toContain("hover:bg-selection");
     const [name, level] = trigger.querySelectorAll<HTMLElement>(
-      "span.whitespace-nowrap, span.shrink-0.text-content\\/50",
+      "span.whitespace-nowrap, span.shrink-0.effort-level-mark",
     );
     expect(name.textContent).toBe("Opus 5.5");
     expect(name.className).toContain("font-semibold");
     expect(level.textContent).toBe("High");
     expect(level.className).toContain("italic");
+  });
+
+  it("marks the chip's effort with its level icon and color, text kept", () => {
+    const { trigger } = render({}, { effort: "ultracode" });
+    expect(trigger.dataset.effortLevel).toBe("ultracode");
+    const icon = trigger.querySelector<SVGElement>("svg[data-effort-icon]")!;
+    expect(icon.dataset.effortIcon).toBe("ultracode");
+    expect(icon.getAttribute("class")).toContain("effort-level-mark");
+    expect(trigger.textContent).toContain("Ultracode");
+
+    act(() => trigger.click());
+    const panel = container.querySelector<HTMLElement>("[data-model-slider]")!;
+    expect(panel.dataset.effortLevel).toBe("ultracode");
+    expect(
+      panel.querySelector<SVGElement>("svg[data-effort-icon]")!.dataset
+        .effortIcon,
+    ).toBe("ultracode");
+  });
+
+  it("leaves chips without the slider unmarked", () => {
+    const { trigger } = render({ presetSlider: false, variant: "pill" });
+    expect(trigger.hasAttribute("data-effort-level")).toBe(false);
+    expect(trigger.querySelector("svg[data-effort-icon]")).toBeNull();
+    expect(
+      trigger.querySelector("span.shrink-0.text-content\\/50")?.textContent,
+    ).toBe("High");
   });
 });

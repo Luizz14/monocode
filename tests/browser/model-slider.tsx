@@ -14,12 +14,8 @@ import {
   resolveModel,
   setHarnessModels,
 } from "../../src/features/sessions/model/models";
-import {
-  currentStepIndex,
-  effortTone,
-  resolvePresetSteps,
-} from "../../src/features/sessions/model/modelPresetSteps";
-import { loadModelPresets } from "../../src/features/settings/model/modelPresets";
+import { resolvePresetSteps } from "../../src/features/sessions/model/modelPresetSteps";
+import { EFFORT_LEVELS } from "../../src/features/sessions/model/effortLevels";
 import type {
   HarnessId,
   RuntimeMode,
@@ -114,32 +110,41 @@ function NewSession() {
 }
 
 function States() {
-  const steps = resolvePresetSteps(loadModelPresets(), source);
+  // One panel per rung of the effort ladder, on a rail of Opus 5.5's levels.
   const opus = resolveModel("claude", "claude:opus-5-5");
+  const steps = resolvePresetSteps(
+    EFFORT_LEVELS.map((effort) => ({
+      id: effort,
+      harness: "claude" as const,
+      model: opus.id,
+      effort,
+    })),
+    source,
+  );
   return (
-    <div className="flex flex-col items-start gap-6 p-6">
-      {["medium", "max", "ultracode", "ultrathink"].map((effort) => {
-        const step = steps.find(
-          (item) => item.model.id === opus.id && item.effort === effort,
-        );
-        return (
-          <div key={effort} data-state={effort}>
-            <ModelPresetSlider
-              steps={steps}
-              index={currentStepIndex(steps, opus, { effort })}
-              modelLabel={step?.modelLabel ?? "Opus 5.5"}
-              effortLabel={step?.effortLabel}
-              tone={effortTone(effort)}
-              haptics={false}
-              onCommit={() => {}}
-              onOpenModels={() => {}}
-              onDone={() => {}}
-            />
-          </div>
-        );
-      })}
+    <div className="grid grid-cols-2 items-start gap-4 p-4">
+      {steps.map((step, index) => (
+        <div key={step.preset.id} data-state={step.effort}>
+          <ModelPresetSlider
+            steps={steps}
+            index={index}
+            modelLabel={step.modelLabel}
+            effortLabel={step.effortLabel}
+            level={step.level}
+            tone={step.tone}
+            haptics={false}
+            onCommit={() => {}}
+            onOpenModels={() => {}}
+            onDone={() => {}}
+          />
+        </div>
+      ))}
     </div>
   );
+}
+
+if (params.get("theme") === "light") {
+  document.documentElement.classList.add("theme-light");
 }
 
 createRoot(document.getElementById("root")!).render(

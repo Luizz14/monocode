@@ -68,15 +68,56 @@ test("steps from the keyboard, switching the model when a preset needs it", asyn
   await expect(track).toHaveCount(0);
 });
 
-test("lights the rail for Max, Ultracode, and Ultrathink", async ({ page }) => {
+test("gives each effort level its icon and color, and lights the top three", async ({
+  page,
+}) => {
   await page.goto("/tests/browser/model-slider.html?view=states");
-  const tones = page.locator("[data-model-slider]");
-  await expect(tones).toHaveCount(4);
-  expect(
-    await tones.evaluateAll((panels) =>
-      panels.map((panel) => panel.getAttribute("data-effort-tone")),
-    ),
-  ).toEqual([null, "max", "ultracode", "ultrathink"]);
+  const panels = page.locator("[data-model-slider]");
+  await expect(panels).toHaveCount(7);
+  const looks = await panels.evaluateAll((all) =>
+    all.map((panel) => ({
+      level: panel.getAttribute("data-effort-level"),
+      tone: panel.getAttribute("data-effort-tone"),
+      icon: panel
+        .querySelector("svg[data-effort-icon]")
+        ?.getAttribute("data-effort-icon"),
+      color: getComputedStyle(panel.querySelector(".model-slider-globe")!)
+        .color,
+      text: panel.querySelector(".model-slider-effort")?.textContent,
+    })),
+  );
+  expect(looks.map((look) => look.level)).toEqual([
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultracode",
+    "ultrathink",
+  ]);
+  expect(looks.map((look) => look.icon)).toEqual(
+    looks.map((look) => look.level),
+  );
+  expect(looks.map((look) => look.tone)).toEqual([
+    null,
+    null,
+    null,
+    null,
+    "max",
+    "ultracode",
+    "ultrathink",
+  ]);
+  // Every level has its own color, and its name stays in words.
+  expect(new Set(looks.map((look) => look.color)).size).toBe(7);
+  expect(looks.map((look) => look.text)).toEqual([
+    "Low",
+    "Medium",
+    "High",
+    "Extra High",
+    "Max",
+    "Ultracode",
+    "Ultrathink",
+  ]);
   await expect(page.locator(".model-slider-tiles")).toHaveCount(3);
 });
 
