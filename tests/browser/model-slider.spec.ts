@@ -365,3 +365,50 @@ test("sets the composer chip in the bundled faces", async ({
     1,
   );
 });
+
+for (const view of ["new", "active"] as const) {
+  test(`puts the paperclip right before Send in the ${view} composer`, async ({
+    page,
+  }, testInfo) => {
+    await page.goto(
+      `/tests/browser/model-slider.html${view === "active" ? "?view=active" : ""}`,
+    );
+    const box = page.locator("[data-composer-box]");
+    const attach = box.getByRole("button", {
+      name: "Add files or choose a mode",
+    });
+    const send = box.locator(
+      view === "active" ? 'button[aria-label="Stop"]' : ".composer-send",
+    );
+    const access = box.locator("[data-access-picker-trigger]");
+    const [a, s, c, b] = await Promise.all([
+      attach.boundingBox(),
+      send.boundingBox(),
+      access.boundingBox(),
+      box.boundingBox(),
+    ]);
+    const note = `attach ${a!.x - b!.x},${a!.y - b!.y} ${a!.width}x${a!.height}; send ${s!.x - b!.x}; gap ${s!.x - (a!.x + a!.width)}`;
+    testInfo.annotations.push({ type: "attach", description: note });
+    console.log(`${view}: ${note}`);
+    // Same row as Send, 4px to its left, and right of the chips.
+    expect(a!.y).toBe(s!.y);
+    expect(a!.width).toBe(26);
+    expect(s!.x - (a!.x + a!.width)).toBe(4);
+    expect(a!.x).toBeGreaterThan(c!.x + c!.width);
+
+    const background = () =>
+      attach.evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(await background()).toBe("rgba(0, 0, 0, 0)");
+    await attach.hover();
+    await expect.poll(background).not.toBe("rgba(0, 0, 0, 0)");
+
+    await attach.click();
+    const menu = page.locator("[data-composer-plus]");
+    await expect(menu).toContainText("Upload file");
+    const m = (await menu.boundingBox())!;
+    // Opens above the button, inward from the composer's right side.
+    expect(m.y + m.height).toBeLessThanOrEqual(a!.y);
+    expect(m.x + m.width).toBeLessThanOrEqual(b!.x + b!.width);
+    expect(Math.abs(m.x + m.width - (a!.x + a!.width))).toBeLessThan(4);
+  });
+}

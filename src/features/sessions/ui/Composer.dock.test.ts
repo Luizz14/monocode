@@ -150,6 +150,72 @@ describe("composer parity", () => {
   });
 });
 
+describe("composer attach button", () => {
+  const ATTACH = 'button[aria-label="Add files or choose a mode"]';
+
+  it.each([
+    ["the new-session composer", true],
+    ["the docked composer", false],
+  ])("sits right before Send in %s", (_, shell) => {
+    const { box } = mount({ shell });
+    const attach = box().querySelector<HTMLButtonElement>(ATTACH)!;
+    const send = box().querySelector<HTMLButtonElement>(".composer-send")!;
+    const chip = box().querySelector("[data-model-picker-trigger]")!;
+    // Same row, after the model chip, and nothing focusable between it and
+    // Send.
+    const row = send.closest(".pb-3")!;
+    expect(row.contains(attach)).toBe(true);
+    expect(
+      chip.compareDocumentPosition(attach) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    const controls = [...row.querySelectorAll("button")].filter(
+      (button) => !button.closest("[data-composer-plus]"),
+    );
+    expect(controls.indexOf(send) - controls.indexOf(attach)).toBe(1);
+  });
+
+  it("draws a paperclip with no fill at rest", () => {
+    const { box } = mount({ shell: false });
+    const attach = box().querySelector<HTMLButtonElement>(ATTACH)!;
+    expect(attach.title).toBe("Add files or choose a mode");
+    const path = attach.querySelector("svg path")!;
+    expect(path.getAttribute("d")).toMatch(/^M19\.5 12\.0001V13\.5001/);
+    const svg = attach.querySelector("svg")!;
+    expect(svg.getAttribute("class")).toContain("size-3.5");
+    expect(
+      svg.getAttribute("stroke-width") ?? path.getAttribute("stroke-width"),
+    ).toBe("1.75");
+    const classes = attach.className.split(/\s+/);
+    expect(classes).not.toContain("bg-selection");
+    expect(classes).toEqual(
+      expect.arrayContaining([
+        "size-6.5",
+        "hover:bg-selection",
+        "focus-visible:bg-selection",
+      ]),
+    );
+  });
+
+  it("still opens the attach and mode menu, aligned to its right edge", () => {
+    const { box } = mount({ shell: false });
+    const attach = box().querySelector<HTMLButtonElement>(ATTACH)!;
+    act(() => attach.click());
+    const menu = document.querySelector<HTMLElement>("[data-composer-plus]")!;
+    expect(menu.textContent).toContain("Upload file");
+    // Aligned to the button's right edge, so it opens inward from the
+    // composer's right side. (Without layout here it may flip vertically.)
+    expect(menu.style.transformOrigin).toMatch(/^100% /);
+    expect(attach.className).toContain("bg-selection");
+    act(() => attach.click());
+    expect(document.querySelector("[data-composer-plus]")).toBeNull();
+  });
+
+  it("stays hidden in the compact composer", () => {
+    const { box } = mount({ shell: false, compact: true });
+    expect(box().querySelector(ATTACH)!.closest(".hidden")).not.toBeNull();
+  });
+});
+
 describe("docked composer behavior", () => {
   it("offers Stop during a turn, and Send again once something is typed", () => {
     const { box, render, onStop } = mount({ shell: false, busy: true });

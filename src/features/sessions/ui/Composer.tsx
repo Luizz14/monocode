@@ -5,7 +5,7 @@ import {
   CircleDashed,
   CursorMagicSelection,
   FilePlus,
-  Plus,
+  Paperclip,
   Share,
   Square,
   StickyNote,
@@ -322,10 +322,12 @@ function ToolButton({
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className={`grid size-6.5 shrink-0 place-items-center rounded-md ${
+      // No fill at rest, like the model and access chips beside it; the
+      // chips' hover fill marks hover, keyboard focus, and an open menu.
+      className={`grid size-6.5 shrink-0 place-items-center rounded-md outline-none ${
         active
-          ? "bg-selection-emphasis text-content"
-          : "bg-selection text-content/50 hover:bg-selection-hover hover:text-content"
+          ? "bg-selection text-content"
+          : "text-content/50 hover:bg-selection hover:text-content focus-visible:bg-selection focus-visible:text-content"
       } disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-content/50`}
     >
       {children}
@@ -2146,6 +2148,116 @@ export function Composer({
           </div>
 
           <div className="flex items-center gap-1 px-4 pb-3">
+            {!compact && operatorActive ? (
+              <ModeCommandPill
+                name={OPERATOR_COMMAND.name}
+                onClear={() => {
+                  setOperatorSelected(false);
+                  clearLeadingMode(OPERATOR_COMMAND.name);
+                  ref.current?.focus();
+                }}
+              />
+            ) : null}
+            {!compact && orchestrationActive ? (
+              <ModeCommandPill
+                name={ORCHESTRATOR_COMMAND.name}
+                onClear={() => {
+                  setOrchestrationSelected(false);
+                  clearLeadingMode(ORCHESTRATOR_COMMAND.name);
+                  ref.current?.focus();
+                }}
+              />
+            ) : null}
+            {!compact && planActive ? (
+              <ModeCommandPill
+                name={PLAN_COMMAND.name}
+                onClear={() => {
+                  setPlanSelected(false);
+                  clearLeadingMode(PLAN_COMMAND.name);
+                  ref.current?.focus();
+                }}
+              />
+            ) : null}
+            {!compact && draftActive ? (
+              <ModeCommandPill
+                name={DRAFT_COMMAND.name}
+                onClear={() => {
+                  setDraftSelected(false);
+                  clearLeadingMode(DRAFT_COMMAND.name);
+                  ref.current?.focus();
+                }}
+              />
+            ) : null}
+            <div
+              className="composer-toolbar flex min-w-0 flex-1 items-center"
+              onWheel={(e) => {
+                if (
+                  e.target instanceof Element &&
+                  e.target.closest(
+                    "[data-model-picker], [data-model-control], [data-access-picker], [data-model-settings]",
+                  )
+                ) {
+                  return;
+                }
+                const el = e.currentTarget;
+                if (el.scrollWidth <= el.clientWidth) return;
+                if (e.deltaX === 0 && e.deltaY !== 0) el.scrollLeft += e.deltaY;
+              }}
+            >
+              <div className="flex shrink-0 items-center gap-1">
+                <ModelPicker
+                  harness={harness}
+                  model={model}
+                  values={modelSettings}
+                  allowedHarnesses={allowedModelHarnesses}
+                  project={cwd}
+                  hideSettings={controlsBeside}
+                  hotkeys={hotkeys && enabled}
+                  variant="ghost"
+                  presetSlider
+                  onChange={onModelChange}
+                  onSettingsChange={(settings) =>
+                    onModelSettingsChange?.(settings)
+                  }
+                  onClose={() => ref.current?.focus()}
+                />
+                {controlsBeside ? (
+                  <ModelControlPills
+                    harness={harness}
+                    model={model}
+                    values={modelSettings}
+                    onSettingsChange={(settings) =>
+                      onModelSettingsChange?.(settings)
+                    }
+                    onClose={() => ref.current?.focus()}
+                  />
+                ) : null}
+                {!compact && harness !== "fx" ? (
+                  <AccessPicker
+                    value={runtimeMode}
+                    busy={busy}
+                    variant="ghost"
+                    onChange={onRuntimeModeChange}
+                    onClose={() => ref.current?.focus()}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            {resendEdited ? (
+              <button
+                type="button"
+                title="Stop editing last message"
+                aria-label="Stop editing last message"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={exitEditMode}
+                className="edit-last-turn-button flex h-6.5 shrink-0 items-center gap-1 rounded-md border border-current/20 px-2 text-[11px] font-medium transition-[background-color,color,border-color] hover:border-current/35 hover:bg-content/15 hover:text-content focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              >
+                <X className="size-3" strokeWidth={1.8} />
+                <span>Cancel edit</span>
+              </button>
+            ) : null}
+            {/* Attach sits beside Send, with the other ghost controls. */}
             <div
               ref={plusRef}
               className={compact ? "hidden" : "relative shrink-0"}
@@ -2155,13 +2267,13 @@ export function Composer({
                 active={plusOpen}
                 onClick={() => setPlusOpen((open) => !open)}
               >
-                <Plus className="size-3.5" strokeWidth={1.5} />
+                <Paperclip className="size-3.5" strokeWidth={1.75} />
               </ToolButton>
               {plusOpen ? (
                 <Popover
                   anchor={plusRef}
                   side="top"
-                  align="start"
+                  align="end"
                   width={250}
                   onDismiss={() => setPlusOpen(false)}
                   data-composer-plus
@@ -2316,115 +2428,6 @@ export function Composer({
                 </Popover>
               ) : null}
             </div>
-            {!compact && operatorActive ? (
-              <ModeCommandPill
-                name={OPERATOR_COMMAND.name}
-                onClear={() => {
-                  setOperatorSelected(false);
-                  clearLeadingMode(OPERATOR_COMMAND.name);
-                  ref.current?.focus();
-                }}
-              />
-            ) : null}
-            {!compact && orchestrationActive ? (
-              <ModeCommandPill
-                name={ORCHESTRATOR_COMMAND.name}
-                onClear={() => {
-                  setOrchestrationSelected(false);
-                  clearLeadingMode(ORCHESTRATOR_COMMAND.name);
-                  ref.current?.focus();
-                }}
-              />
-            ) : null}
-            {!compact && planActive ? (
-              <ModeCommandPill
-                name={PLAN_COMMAND.name}
-                onClear={() => {
-                  setPlanSelected(false);
-                  clearLeadingMode(PLAN_COMMAND.name);
-                  ref.current?.focus();
-                }}
-              />
-            ) : null}
-            {!compact && draftActive ? (
-              <ModeCommandPill
-                name={DRAFT_COMMAND.name}
-                onClear={() => {
-                  setDraftSelected(false);
-                  clearLeadingMode(DRAFT_COMMAND.name);
-                  ref.current?.focus();
-                }}
-              />
-            ) : null}
-            <div
-              className="composer-toolbar flex min-w-0 flex-1 items-center"
-              onWheel={(e) => {
-                if (
-                  e.target instanceof Element &&
-                  e.target.closest(
-                    "[data-model-picker], [data-model-control], [data-access-picker], [data-model-settings]",
-                  )
-                ) {
-                  return;
-                }
-                const el = e.currentTarget;
-                if (el.scrollWidth <= el.clientWidth) return;
-                if (e.deltaX === 0 && e.deltaY !== 0) el.scrollLeft += e.deltaY;
-              }}
-            >
-              <div className="flex shrink-0 items-center gap-1">
-                <ModelPicker
-                  harness={harness}
-                  model={model}
-                  values={modelSettings}
-                  allowedHarnesses={allowedModelHarnesses}
-                  project={cwd}
-                  hideSettings={controlsBeside}
-                  hotkeys={hotkeys && enabled}
-                  variant="ghost"
-                  presetSlider
-                  onChange={onModelChange}
-                  onSettingsChange={(settings) =>
-                    onModelSettingsChange?.(settings)
-                  }
-                  onClose={() => ref.current?.focus()}
-                />
-                {controlsBeside ? (
-                  <ModelControlPills
-                    harness={harness}
-                    model={model}
-                    values={modelSettings}
-                    onSettingsChange={(settings) =>
-                      onModelSettingsChange?.(settings)
-                    }
-                    onClose={() => ref.current?.focus()}
-                  />
-                ) : null}
-                {!compact && harness !== "fx" ? (
-                  <AccessPicker
-                    value={runtimeMode}
-                    busy={busy}
-                    variant="ghost"
-                    onChange={onRuntimeModeChange}
-                    onClose={() => ref.current?.focus()}
-                  />
-                ) : null}
-              </div>
-            </div>
-
-            {resendEdited ? (
-              <button
-                type="button"
-                title="Stop editing last message"
-                aria-label="Stop editing last message"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={exitEditMode}
-                className="edit-last-turn-button flex h-6.5 shrink-0 items-center gap-1 rounded-md border border-current/20 px-2 text-[11px] font-medium transition-[background-color,color,border-color] hover:border-current/35 hover:bg-content/15 hover:text-content focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              >
-                <X className="size-3" strokeWidth={1.8} />
-                <span>Cancel edit</span>
-              </button>
-            ) : null}
             <div className="flex shrink-0 items-center gap-1">
               <ComposerAction
                 busy={busy}
