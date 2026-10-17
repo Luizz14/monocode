@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Mutex};
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -1853,103 +1853,106 @@ pub(crate) fn git_diff_files_for(root: &Path) -> GitDiffIndex {
 }
 
 fn git_diff_index_with(root: &Path, include_sync: bool) -> GitDiffIndex {
+    // One `git status` read lists every changed and untracked path with its
+    // index and worktree state, where this took five diffs and an untracked
+    // listing. Line counts still come from `git diff --numstat`, but only
+    // when a tracked file changed. Polled every two seconds per open panel,
+    // that is what keeps the cost of an idle checkout to one process.
+    let Some(status) = git_status_read(root) else {
+        return GitDiffIndex::default();
+    };
+    let prefix = git_workspace_prefix(root);
     let mut files: HashMap<String, FileAcc> = HashMap::new();
     let mut statuses: HashMap<String, &'static str> = HashMap::new();
-
-    if let Some(text) = git_run(
-        root,
-        &[
-            "diff",
-            "-z",
-            "--relative",
-            "--no-ext-diff",
-            "--numstat",
-            "HEAD",
-            "--",
-            ".",
-        ],
-    ) {
-        add_numstat_map(&text, &mut files);
-        if let Some(names) = git_run(
-            root,
-            &[
-                "diff",
-                "-z",
-                "--relative",
-                "--no-ext-diff",
-                "--name-status",
-                "--no-renames",
-                "HEAD",
-                "--",
-                ".",
-            ],
-        ) {
-            add_name_status(&names, &mut statuses);
+    let mut untracked: Vec<(String, String)> = Vec::new();
+    let mut tracked_changes = false;
+    for entry in &status.entries {
+        let Some(path) = entry.path.strip_prefix(prefix.as_str()) else {
+            continue;
+        };
+        let relative = literal_diff_path(path);
+        if relative.is_empty() {
+            continue;
         }
-    } else {
-        if let Some(text) = git_run(
-            root,
-            &[
-                "diff",
-                "-z",
-                "--relative",
-                "--no-ext-diff",
-                "--numstat",
-                "--",
-                ".",
-            ],
-        ) {
-            add_numstat_map(&text, &mut files);
+        if entry.untracked {
+            untracked.push((relative, path.to_string()));
+            continue;
         }
-        if let Some(text) = git_run(
-            root,
-            &[
-                "diff",
-                "-z",
-                "--relative",
-                "--no-ext-diff",
-                "--cached",
-                "--numstat",
-                "--",
-                ".",
-            ],
-        ) {
-            add_numstat_map(&text, &mut files);
-        }
-        if let Some(names) = git_run(
-            root,
-            &[
-                "diff",
-                "-z",
-                "--relative",
-                "--no-ext-diff",
-                "--name-status",
-                "--no-renames",
-                "--",
-                ".",
-            ],
-        ) {
-            add_name_status(&names, &mut statuses);
-        }
-        if let Some(names) = git_run(
-            root,
-            &[
-                "diff",
-                "-z",
-                "--relative",
-                "--no-ext-diff",
-                "--cached",
-                "--name-status",
-                "--no-renames",
-                "--",
-                ".",
-            ],
-        ) {
-            add_name_status(&names, &mut statuses);
+        tracked_changes = true;
+        let acc = files.entry(relative.clone()).or_default();
+        acc.staged = entry.unmerged || entry.index != b'.';
+        acc.unstaged = entry.unmerged || entry.worktree != b'.';
+        // The same reading `git diff --name-status HEAD` gave: what the
+        // working tree holds against HEAD, whatever the index says.
+        let status = if entry.unmerged {
+            if root.join(&relative).exists() {
+                "modified"
+            } else {
+                "deleted"
+            }
+        } else if entry.worktree == b'D' || (entry.index == b'D' && entry.worktree == b'.') {
+            "deleted"
+        } else if entry.index == b'A' || entry.worktree == b'A' {
+            "added"
+        } else {
+            "modified"
+        };
+        statuses.insert(relative, status);
+    }
+    if tracked_changes {
+        if status.oid.is_some() {
+            if let Some(text) = git_run(
+                root,
+                &[
+                    "diff",
+                    "-z",
+                    "--relative",
+                    "--no-ext-diff",
+                    "--numstat",
+                    "HEAD",
+                    "--",
+                    ".",
+                ],
+            ) {
+                add_numstat_map(&text, &mut files);
+            }
+        } else {
+            // An unborn branch has no HEAD to diff against: the index holds
+            // what is staged and the working tree the rest.
+            for args in [
+                &[
+                    "diff",
+                    "-z",
+                    "--relative",
+                    "--no-ext-diff",
+                    "--numstat",
+                    "--",
+                    ".",
+                ][..],
+                &[
+                    "diff",
+                    "-z",
+                    "--relative",
+                    "--no-ext-diff",
+                    "--cached",
+                    "--numstat",
+                    "--",
+                    ".",
+                ][..],
+            ] {
+                if let Some(text) = git_run(root, args) {
+                    add_numstat_map(&text, &mut files);
+                }
+            }
         }
     }
-    add_untracked_map(root, &mut files);
-    mark_cached_and_unstaged(root, &mut files);
+    for (relative, path) in untracked {
+        let entry = files.entry(relative).or_default();
+        entry.untracked = true;
+        if entry.additions == 0 {
+            entry.additions = text_line_count(&root.join(path));
+        }
+    }
 
     let mut out = Vec::with_capacity(files.len());
     let mut additions = 0i64;
@@ -1979,13 +1982,16 @@ fn git_diff_index_with(root: &Path, include_sync: bool) -> GitDiffIndex {
     }
     out.sort_by(|a, b| a.relative.cmp(&b.relative));
     let sync = if include_sync {
-        git_sync_for(root)
+        git_sync_cached(root, &status)
     } else {
         GitSync::default()
     };
     GitDiffIndex {
-        branch: git_branch(root),
-        head: git_stdout(root, &["rev-parse", "HEAD"]),
+        branch: status
+            .branch
+            .clone()
+            .or_else(|| git_stdout(root, &["rev-parse", "--short", "HEAD"])),
+        head: status.oid.clone(),
         files: out,
         additions,
         deletions,
@@ -1996,6 +2002,238 @@ fn git_diff_index_with(root: &Path, include_sync: bool) -> GitDiffIndex {
         behind: sync.behind,
         ahead_of_default: sync.ahead_of_default,
         head_pushed: sync.head_pushed,
+    }
+}
+
+/// One `git status --porcelain=v2` read of the opened folder.
+struct GitStatusRead {
+    /// The commit at HEAD; none on an unborn branch.
+    oid: Option<String>,
+    /// The branch name; none while HEAD is detached.
+    branch: Option<String>,
+    upstream: Option<String>,
+    /// Commits ahead of and behind the upstream, when git could count them.
+    ahead_behind: Option<(i64, i64)>,
+    entries: Vec<GitStatusEntry>,
+}
+
+struct GitStatusEntry {
+    /// The index column (`X`) of the status code.
+    index: u8,
+    /// The working tree column (`Y`) of the status code.
+    worktree: u8,
+    unmerged: bool,
+    untracked: bool,
+    /// As git prints it: relative to the repository root, unquoted.
+    path: String,
+}
+
+fn git_status_read(root: &Path) -> Option<GitStatusRead> {
+    let output = git_output(
+        root,
+        &[
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--branch",
+            "--untracked-files=all",
+            "--no-renames",
+            "--",
+            ".",
+        ],
+    )?;
+    Some(parse_git_status_v2(&String::from_utf8_lossy(&output)))
+}
+
+/// The last of `count` space-separated fields, which may itself hold spaces.
+fn status_field(rest: &str, count: usize) -> Option<&str> {
+    rest.splitn(count, ' ').nth(count - 1)
+}
+
+fn parse_git_status_v2(text: &str) -> GitStatusRead {
+    let mut read = GitStatusRead {
+        oid: None,
+        branch: None,
+        upstream: None,
+        ahead_behind: None,
+        entries: Vec::new(),
+    };
+    let mut records = text.split('\0');
+    while let Some(record) = records.next() {
+        if record.is_empty() {
+            continue;
+        }
+        if let Some(header) = record.strip_prefix("# ") {
+            if let Some(oid) = header.strip_prefix("branch.oid ") {
+                read.oid = (oid != "(initial)").then(|| oid.to_string());
+            } else if let Some(head) = header.strip_prefix("branch.head ") {
+                read.branch = (head != "(detached)").then(|| head.to_string());
+            } else if let Some(upstream) = header.strip_prefix("branch.upstream ") {
+                read.upstream = Some(upstream.to_string());
+            } else if let Some(counts) = header.strip_prefix("branch.ab ") {
+                let mut parts = counts.split_whitespace();
+                let ahead = parts
+                    .next()
+                    .and_then(|value| value.trim_start_matches('+').parse().ok());
+                let behind = parts
+                    .next()
+                    .and_then(|value| value.trim_start_matches('-').parse().ok());
+                if let (Some(ahead), Some(behind)) = (ahead, behind) {
+                    read.ahead_behind = Some((ahead, behind));
+                }
+            }
+            continue;
+        }
+        let Some((kind, rest)) = record.split_once(' ') else {
+            continue;
+        };
+        let (path, unmerged) = match kind {
+            // XY sub mH mI mW hH hI path
+            "1" => (status_field(rest, 8), false),
+            // XY sub mH mI mW hH hI Xscore path, then the original path.
+            "2" => {
+                let path = status_field(rest, 9);
+                let _original = records.next();
+                (path, false)
+            }
+            // XY sub m1 m2 m3 mW h1 h2 h3 path
+            "u" => (status_field(rest, 10), true),
+            "?" => {
+                read.entries.push(GitStatusEntry {
+                    index: b'?',
+                    worktree: b'?',
+                    unmerged: false,
+                    untracked: true,
+                    path: rest.to_string(),
+                });
+                continue;
+            }
+            _ => continue,
+        };
+        let code = rest.as_bytes();
+        let (Some(path), Some(&index), Some(&worktree)) = (path, code.first(), code.get(1)) else {
+            continue;
+        };
+        read.entries.push(GitStatusEntry {
+            index,
+            worktree,
+            unmerged,
+            untracked: false,
+            path: path.to_string(),
+        });
+    }
+    read
+}
+
+/// Where the opened folder sits in its repository: `git status` paths are
+/// relative to the repository root. Empty at that root, which holds `.git`.
+fn git_workspace_prefix(root: &Path) -> String {
+    if root.join(".git").exists() {
+        return String::new();
+    }
+    git_stdout(root, &["rev-parse", "--show-prefix"]).unwrap_or_default()
+}
+
+/// How long the remote-side part of a status read (the remote, its default
+/// branch, whether HEAD is pushed) is reused between polls. Git commands the
+/// app runs drop it at once; ones run elsewhere show within this.
+const GIT_SYNC_TTL: Duration = Duration::from_secs(10);
+
+struct GitSyncCacheEntry {
+    at: Instant,
+    oid: Option<String>,
+    branch: Option<String>,
+    upstream: Option<String>,
+    sync: GitSync,
+}
+
+fn git_sync_cache() -> &'static Mutex<HashMap<PathBuf, GitSyncCacheEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, GitSyncCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn invalidate_git_sync(root: &Path) {
+    if let Ok(mut cache) = git_sync_cache().lock() {
+        cache.remove(root);
+    }
+}
+
+fn git_sync_cached(root: &Path, status: &GitStatusRead) -> GitSync {
+    let now = Instant::now();
+    if let Ok(cache) = git_sync_cache().lock() {
+        if let Some(entry) = cache.get(root) {
+            if now.duration_since(entry.at) < GIT_SYNC_TTL
+                && entry.oid == status.oid
+                && entry.branch == status.branch
+                && entry.upstream == status.upstream
+            {
+                let mut sync = entry.sync.clone();
+                // The status read counts against the upstream every time.
+                if let Some((ahead, behind)) = status.ahead_behind {
+                    sync.ahead = ahead;
+                    sync.behind = behind;
+                }
+                return sync;
+            }
+        }
+    }
+    let sync = git_sync_from_status(root, status);
+    if let Ok(mut cache) = git_sync_cache().lock() {
+        cache.insert(
+            root.to_path_buf(),
+            GitSyncCacheEntry {
+                at: now,
+                oid: status.oid.clone(),
+                branch: status.branch.clone(),
+                upstream: status.upstream.clone(),
+                sync: sync.clone(),
+            },
+        );
+    }
+    sync
+}
+
+fn git_sync_from_status(root: &Path, status: &GitStatusRead) -> GitSync {
+    let remote = git_remote_name(root);
+    let upstream = status.upstream.clone();
+    let default_branch = git_default_branch(root, remote.as_deref());
+    let default_ref = match (&remote, &default_branch) {
+        (Some(remote), Some(branch)) => Some(format!("{remote}/{branch}")),
+        _ => None,
+    };
+    let (ahead, behind) = if let Some(counts) = status.ahead_behind {
+        counts
+    } else if upstream.is_some() {
+        (0, 0)
+    } else if let Some(base) = default_ref.as_deref() {
+        git_ahead_behind(root, base)
+    } else {
+        (0, 0)
+    };
+    let ahead_of_default = if let Some(base) = default_ref.as_deref() {
+        git_ahead_behind(root, base).0
+    } else {
+        ahead
+    };
+    let head_pushed = git_stdout(
+        root,
+        &[
+            "for-each-ref",
+            "--count=1",
+            "--contains",
+            "HEAD",
+            "refs/remotes",
+        ],
+    )
+    .is_some();
+    GitSync {
+        remote,
+        upstream,
+        default_branch,
+        ahead,
+        behind,
+        ahead_of_default,
+        head_pushed,
     }
 }
 
@@ -2124,48 +2362,6 @@ fn text_line_count(path: &Path) -> i64 {
         lines -= 1;
     }
     lines
-}
-
-fn mark_cached_and_unstaged(root: &Path, files: &mut HashMap<String, FileAcc>) {
-    if let Some(names) = git_run(
-        root,
-        &[
-            "diff",
-            "-z",
-            "--relative",
-            "--cached",
-            "--name-only",
-            "--no-renames",
-            "--",
-            ".",
-        ],
-    ) {
-        for line in names.split('\0') {
-            let relative = literal_diff_path(line);
-            if !relative.is_empty() {
-                files.entry(relative).or_default().staged = true;
-            }
-        }
-    }
-    if let Some(names) = git_run(
-        root,
-        &[
-            "diff",
-            "-z",
-            "--relative",
-            "--name-only",
-            "--no-renames",
-            "--",
-            ".",
-        ],
-    ) {
-        for line in names.split('\0') {
-            let relative = literal_diff_path(line);
-            if !relative.is_empty() {
-                files.entry(relative).or_default().unstaged = true;
-            }
-        }
-    }
 }
 
 fn git_file_diff_for(root: &Path, relative: &str, staged: bool) -> Result<GitFileDiff, String> {
@@ -4594,6 +4790,9 @@ pub(crate) fn git_checked(root: &Path, args: &[&str]) -> Result<(), String> {
         .output()
         .map_err(|e| e.to_string())?;
     if output.status.success() {
+        // A push, pull, commit or checkout changes what the next status
+        // read must say about the remote.
+        invalidate_git_sync(root);
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -4965,7 +5164,7 @@ fn git_origin_repo(root: &Path) -> Option<String> {
     git_url_repo_name(&git_stdout(root, &["remote", "get-url", "origin"])?)
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct GitSync {
     remote: Option<String>,
     upstream: Option<String>,
@@ -4974,48 +5173,6 @@ struct GitSync {
     behind: i64,
     ahead_of_default: i64,
     head_pushed: bool,
-}
-
-fn git_sync_for(root: &Path) -> GitSync {
-    let remote = git_remote_name(root);
-    let upstream = git_stdout(root, &["rev-parse", "--abbrev-ref", "@{upstream}"]);
-    let default_branch = git_default_branch(root, remote.as_deref());
-    let default_ref = match (&remote, &default_branch) {
-        (Some(remote), Some(branch)) => Some(format!("{remote}/{branch}")),
-        _ => None,
-    };
-    let (ahead, behind) = if upstream.is_some() {
-        git_ahead_behind(root, "@{upstream}")
-    } else if let Some(base) = default_ref.as_deref() {
-        git_ahead_behind(root, base)
-    } else {
-        (0, 0)
-    };
-    let ahead_of_default = if let Some(base) = default_ref.as_deref() {
-        git_ahead_behind(root, base).0
-    } else {
-        ahead
-    };
-    let head_pushed = git_stdout(
-        root,
-        &[
-            "for-each-ref",
-            "--count=1",
-            "--contains",
-            "HEAD",
-            "refs/remotes",
-        ],
-    )
-    .is_some();
-    GitSync {
-        remote,
-        upstream,
-        default_branch,
-        ahead,
-        behind,
-        ahead_of_default,
-        head_pushed,
-    }
 }
 
 fn git_remote_name(root: &Path) -> Option<String> {
@@ -7569,6 +7726,522 @@ mod tests {
         assert_eq!(untracked.status, "untracked");
         assert_eq!(untracked.additions, 2);
         assert_eq!(untracked.deletions, 0);
+    }
+
+    /// The reading `git_diff_index_for` replaced: five diffs and an untracked
+    /// listing. Kept so the status-based reading is checked against it.
+    fn legacy_git_diff_index_for(root: &Path) -> GitDiffIndex {
+        let include_sync = true;
+        let mut files: HashMap<String, FileAcc> = HashMap::new();
+        let mut statuses: HashMap<String, &'static str> = HashMap::new();
+
+        if let Some(text) = git_run(
+            root,
+            &[
+                "diff",
+                "-z",
+                "--relative",
+                "--no-ext-diff",
+                "--numstat",
+                "HEAD",
+                "--",
+                ".",
+            ],
+        ) {
+            add_numstat_map(&text, &mut files);
+            if let Some(names) = git_run(
+                root,
+                &[
+                    "diff",
+                    "-z",
+                    "--relative",
+                    "--no-ext-diff",
+                    "--name-status",
+                    "--no-renames",
+                    "HEAD",
+                    "--",
+                    ".",
+                ],
+            ) {
+                add_name_status(&names, &mut statuses);
+            }
+        } else {
+            if let Some(text) = git_run(
+                root,
+                &[
+                    "diff",
+                    "-z",
+                    "--relative",
+                    "--no-ext-diff",
+                    "--numstat",
+                    "--",
+                    ".",
+                ],
+            ) {
+                add_numstat_map(&text, &mut files);
+            }
+            if let Some(text) = git_run(
+                root,
+                &[
+                    "diff",
+                    "-z",
+                    "--relative",
+                    "--no-ext-diff",
+                    "--cached",
+                    "--numstat",
+                    "--",
+                    ".",
+                ],
+            ) {
+                add_numstat_map(&text, &mut files);
+            }
+            if let Some(names) = git_run(
+                root,
+                &[
+                    "diff",
+                    "-z",
+                    "--relative",
+                    "--no-ext-diff",
+                    "--name-status",
+                    "--no-renames",
+                    "--",
+                    ".",
+                ],
+            ) {
+                add_name_status(&names, &mut statuses);
+            }
+            if let Some(names) = git_run(
+                root,
+                &[
+                    "diff",
+                    "-z",
+                    "--relative",
+                    "--no-ext-diff",
+                    "--cached",
+                    "--name-status",
+                    "--no-renames",
+                    "--",
+                    ".",
+                ],
+            ) {
+                add_name_status(&names, &mut statuses);
+            }
+        }
+        add_untracked_map(root, &mut files);
+        mark_cached_and_unstaged(root, &mut files);
+
+        let mut out = Vec::with_capacity(files.len());
+        let mut additions = 0i64;
+        let mut deletions = 0i64;
+        for (relative, acc) in files {
+            additions += acc.additions;
+            deletions += acc.deletions;
+            let abs = root.join(&relative);
+            let status = if acc.untracked {
+                "untracked"
+            } else if let Some(status) = statuses.get(&relative) {
+                *status
+            } else if !abs.exists() {
+                "deleted"
+            } else {
+                "modified"
+            };
+            out.push(GitChangedFile {
+                path: path_to_js(&abs),
+                relative,
+                status: status.to_string(),
+                additions: acc.additions,
+                deletions: acc.deletions,
+                staged: acc.staged,
+                unstaged: acc.untracked || acc.unstaged,
+            });
+        }
+        out.sort_by(|a, b| a.relative.cmp(&b.relative));
+        let sync = if include_sync {
+            git_sync_for(root)
+        } else {
+            GitSync::default()
+        };
+        GitDiffIndex {
+            branch: git_branch(root),
+            head: git_stdout(root, &["rev-parse", "HEAD"]),
+            files: out,
+            additions,
+            deletions,
+            remote: sync.remote,
+            upstream: sync.upstream,
+            default_branch: sync.default_branch,
+            ahead: sync.ahead,
+            behind: sync.behind,
+            ahead_of_default: sync.ahead_of_default,
+            head_pushed: sync.head_pushed,
+        }
+    }
+
+    fn mark_cached_and_unstaged(root: &Path, files: &mut HashMap<String, FileAcc>) {
+        if let Some(names) = git_run(
+            root,
+            &[
+                "diff",
+                "-z",
+                "--relative",
+                "--cached",
+                "--name-only",
+                "--no-renames",
+                "--",
+                ".",
+            ],
+        ) {
+            for line in names.split('\0') {
+                let relative = literal_diff_path(line);
+                if !relative.is_empty() {
+                    files.entry(relative).or_default().staged = true;
+                }
+            }
+        }
+        if let Some(names) = git_run(
+            root,
+            &[
+                "diff",
+                "-z",
+                "--relative",
+                "--name-only",
+                "--no-renames",
+                "--",
+                ".",
+            ],
+        ) {
+            for line in names.split('\0') {
+                let relative = literal_diff_path(line);
+                if !relative.is_empty() {
+                    files.entry(relative).or_default().unstaged = true;
+                }
+            }
+        }
+    }
+
+    fn git_sync_for(root: &Path) -> GitSync {
+        let remote = git_remote_name(root);
+        let upstream = git_stdout(root, &["rev-parse", "--abbrev-ref", "@{upstream}"]);
+        let default_branch = git_default_branch(root, remote.as_deref());
+        let default_ref = match (&remote, &default_branch) {
+            (Some(remote), Some(branch)) => Some(format!("{remote}/{branch}")),
+            _ => None,
+        };
+        let (ahead, behind) = if upstream.is_some() {
+            git_ahead_behind(root, "@{upstream}")
+        } else if let Some(base) = default_ref.as_deref() {
+            git_ahead_behind(root, base)
+        } else {
+            (0, 0)
+        };
+        let ahead_of_default = if let Some(base) = default_ref.as_deref() {
+            git_ahead_behind(root, base).0
+        } else {
+            ahead
+        };
+        let head_pushed = git_stdout(
+            root,
+            &[
+                "for-each-ref",
+                "--count=1",
+                "--contains",
+                "HEAD",
+                "refs/remotes",
+            ],
+        )
+        .is_some();
+        GitSync {
+            remote,
+            upstream,
+            default_branch,
+            ahead,
+            behind,
+            ahead_of_default,
+            head_pushed,
+        }
+    }
+
+    #[test]
+    fn git_diff_index_matches_the_diff_based_reading() {
+        let dir = tmp("git-diff-index-status");
+        if !init_git_commit(
+            &dir.0,
+            &[
+                ("a.txt", "one\ntwo\n"),
+                ("b.txt", "b\n"),
+                ("gone.txt", "x\n"),
+                ("staged-gone.txt", "y\n"),
+                ("moved.txt", "m\n"),
+                ("my file.txt", "s\n"),
+                ("sub/c.txt", "c\n"),
+                ("sub/d.txt", "d\n"),
+                ("sub/same.txt", "same\n"),
+            ],
+        ) {
+            return;
+        }
+        let root = &dir.0;
+        std::fs::write(root.join("a.txt"), "one\nthree\n").unwrap();
+        std::fs::write(root.join("b.txt"), "b\nb2\n").unwrap();
+        assert!(git(root, &["add", "b.txt"]));
+        std::fs::write(root.join("b.txt"), "b\nb2\nb3\n").unwrap();
+        std::fs::remove_file(root.join("gone.txt")).unwrap();
+        assert!(git(root, &["rm", "-q", "staged-gone.txt"]));
+        assert!(git(root, &["mv", "moved.txt", "renamed.txt"]));
+        std::fs::write(root.join("new.txt"), "n1\nn2\n").unwrap();
+        std::fs::write(root.join("staged-new.txt"), "s1\n").unwrap();
+        assert!(git(root, &["add", "staged-new.txt"]));
+        std::fs::write(root.join("my file.txt"), "s\nt\n").unwrap();
+        std::fs::write(root.join("sub/c.txt"), "c2\n").unwrap();
+        std::fs::write(root.join("sub/e.txt"), "e\n").unwrap();
+        // Staged change later undone in the working tree: index differs
+        // from HEAD, the tree does not.
+        std::fs::write(root.join("sub/same.txt"), "changed\n").unwrap();
+        assert!(git(root, &["add", "sub/same.txt"]));
+        std::fs::write(root.join("sub/same.txt"), "same\n").unwrap();
+        // Dropped from the index but still on disk: staged deletion, untracked file.
+        assert!(git(root, &["rm", "-q", "--cached", "sub/d.txt"]));
+
+        let expected = legacy_git_diff_index_for(root);
+        let actual = git_diff_index_for(root);
+        assert_eq!(actual, expected);
+        let statuses: Vec<(&str, &str, bool, bool)> = actual
+            .files
+            .iter()
+            .map(|file| {
+                (
+                    file.relative.as_str(),
+                    file.status.as_str(),
+                    file.staged,
+                    file.unstaged,
+                )
+            })
+            .collect();
+        assert_eq!(
+            statuses,
+            vec![
+                ("a.txt", "modified", false, true),
+                ("b.txt", "modified", true, true),
+                ("gone.txt", "deleted", false, true),
+                ("moved.txt", "deleted", true, false),
+                ("my file.txt", "modified", false, true),
+                ("new.txt", "untracked", false, true),
+                ("renamed.txt", "added", true, false),
+                ("staged-gone.txt", "deleted", true, false),
+                ("staged-new.txt", "added", true, false),
+                ("sub/c.txt", "modified", false, true),
+                ("sub/d.txt", "untracked", true, true),
+                ("sub/e.txt", "untracked", false, true),
+                ("sub/same.txt", "modified", true, true),
+            ]
+        );
+        let new = actual
+            .files
+            .iter()
+            .find(|f| f.relative == "new.txt")
+            .unwrap();
+        assert_eq!((new.additions, new.deletions), (2, 0));
+        let b = actual.files.iter().find(|f| f.relative == "b.txt").unwrap();
+        assert_eq!((b.additions, b.deletions), (2, 0));
+
+        // A folder inside the repository reads relative to itself.
+        let nested = root.join("sub");
+        let expected = legacy_git_diff_index_for(&nested);
+        let actual = git_diff_index_for(&nested);
+        assert_eq!(actual, expected);
+        assert_eq!(
+            actual
+                .files
+                .iter()
+                .map(|file| file.relative.as_str())
+                .collect::<Vec<_>>(),
+            vec!["c.txt", "d.txt", "e.txt", "same.txt"]
+        );
+        assert_eq!(git_diff_files_for(&nested).files, actual.files);
+    }
+
+    #[test]
+    fn git_diff_index_reads_unborn_and_detached_heads() {
+        let dir = tmp("git-diff-index-heads");
+        if !init_git(&dir.0, "main", None) {
+            return;
+        }
+        std::fs::write(dir.0.join("first.txt"), "1\n2\n").unwrap();
+        std::fs::write(dir.0.join("staged.txt"), "s\n").unwrap();
+        assert!(git(&dir.0, &["add", "staged.txt"]));
+        let unborn = git_diff_index_for(&dir.0);
+        assert_eq!(unborn, legacy_git_diff_index_for(&dir.0));
+        assert_eq!(unborn.branch.as_deref(), Some("main"));
+        assert_eq!(unborn.head, None);
+        let names: Vec<(&str, &str, i64)> = unborn
+            .files
+            .iter()
+            .map(|file| (file.relative.as_str(), file.status.as_str(), file.additions))
+            .collect();
+        assert_eq!(
+            names,
+            vec![("first.txt", "untracked", 2), ("staged.txt", "added", 1)]
+        );
+
+        assert!(git(&dir.0, &["add", "."]) && git(&dir.0, &["commit", "-q", "-m", "init"]));
+        assert!(git(&dir.0, &["checkout", "-q", "--detach"]));
+        let detached = git_diff_index_for(&dir.0);
+        assert_eq!(detached, legacy_git_diff_index_for(&dir.0));
+        assert_eq!(
+            detached.branch,
+            git_stdout(&dir.0, &["rev-parse", "--short", "HEAD"])
+        );
+        assert_eq!(detached.head, git_stdout(&dir.0, &["rev-parse", "HEAD"]));
+        assert!(detached.files.is_empty());
+    }
+
+    #[test]
+    fn git_diff_index_refreshes_the_remote_side_after_the_app_runs_git() {
+        let repo = tmp("git-diff-index-sync-repo");
+        let origin = tmp("git-diff-index-sync-origin");
+        if !init_git_commit(&repo.0, &[("a.txt", "alpha\n")]) {
+            return;
+        }
+        if Command::new("git")
+            .args(["init", "--bare"])
+            .current_dir(&origin.0)
+            .status()
+            .map(|status| !status.success())
+            .unwrap_or(true)
+        {
+            return;
+        }
+        let origin_url = origin.0.to_string_lossy().into_owned();
+        if !git(&repo.0, &["remote", "add", "origin", &origin_url])
+            || !git(&repo.0, &["push", "-q", "-u", "origin", "main"])
+        {
+            return;
+        }
+        invalidate_git_sync(&repo.0);
+        let pushed = git_diff_index_for(&repo.0);
+        assert_eq!(pushed, legacy_git_diff_index_for(&repo.0));
+        assert_eq!(pushed.upstream.as_deref(), Some("origin/main"));
+        assert_eq!((pushed.ahead, pushed.behind), (0, 0));
+        assert!(pushed.head_pushed);
+
+        // The remote side is cached between polls; a commit the app makes
+        // goes through git_checked, which drops the cache.
+        std::fs::write(repo.0.join("a.txt"), "alpha\nbeta\n").unwrap();
+        git_checked(&repo.0, &["add", "a.txt"]).unwrap();
+        git_commit_for(&repo.0, "second").unwrap();
+        let ahead = git_diff_index_for(&repo.0);
+        assert_eq!(ahead, legacy_git_diff_index_for(&repo.0));
+        assert_eq!((ahead.ahead, ahead.behind), (1, 0));
+        assert!(!ahead.head_pushed);
+
+        git_push_for(&repo.0).unwrap();
+        let synced = git_diff_index_for(&repo.0);
+        assert_eq!((synced.ahead, synced.behind), (0, 0));
+        assert!(synced.head_pushed);
+    }
+
+    /// Times a status read of a real checkout against the diff-based reading
+    /// it replaced. Ignored by default; run with
+    /// `MONOCODE_GIT_BENCH_REPO=/path cargo test git_diff_index_bench -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn git_diff_index_bench() {
+        let Ok(repo) = std::env::var("MONOCODE_GIT_BENCH_REPO") else {
+            return;
+        };
+        let root = PathBuf::from(repo);
+        let runs: usize = std::env::var("MONOCODE_GIT_BENCH_RUNS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(10);
+        let stats = |samples: &[f64]| {
+            let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+            let var =
+                samples.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / samples.len() as f64;
+            (mean, var.sqrt())
+        };
+        // Alternate so load on the machine hits both readings alike.
+        let mut legacy = Vec::new();
+        let mut status = Vec::new();
+        let mut status_cold = Vec::new();
+        for _ in 0..runs {
+            let start = Instant::now();
+            let _ = legacy_git_diff_index_for(&root);
+            legacy.push(start.elapsed().as_secs_f64() * 1000.0);
+            invalidate_git_sync(&root);
+            let start = Instant::now();
+            let _ = git_diff_index_for(&root);
+            status_cold.push(start.elapsed().as_secs_f64() * 1000.0);
+            let start = Instant::now();
+            let _ = git_diff_index_for(&root);
+            status.push(start.elapsed().as_secs_f64() * 1000.0);
+        }
+        for (name, samples) in [
+            ("legacy (diffs + listing + sync)", &legacy),
+            ("status read, remote side uncached", &status_cold),
+            ("status read, remote side cached", &status),
+        ] {
+            let (mean, sd) = stats(samples);
+            println!(
+                "{name}: n={} mean={mean:.1} ms sd={sd:.1} ms",
+                samples.len()
+            );
+        }
+    }
+
+    #[test]
+    fn parse_git_status_v2_reads_headers_and_every_entry_kind() {
+        let text = [
+            "# branch.oid 0123abcd",
+            "# branch.head feature",
+            "# branch.upstream origin/feature",
+            "# branch.ab +2 -1",
+            "1 .M N... 100644 100644 100644 aaaa bbbb src/with space.rs",
+            "1 A. N... 000000 100644 100644 0000 cccc added.txt",
+            "2 R. N... 100644 100644 100644 dddd dddd R100 new name.txt",
+            "old name.txt",
+            "u UU N... 100644 100644 100644 100644 e1 e2 e3 conflict.txt",
+            "? untracked dir/file.txt",
+            "! ignored.log",
+            "1 D. N... 100644 000000 000000 ffff 0000 removed.txt",
+        ]
+        .join("\0")
+            + "\0";
+        let read = parse_git_status_v2(&text);
+        assert_eq!(read.oid.as_deref(), Some("0123abcd"));
+        assert_eq!(read.branch.as_deref(), Some("feature"));
+        assert_eq!(read.upstream.as_deref(), Some("origin/feature"));
+        assert_eq!(read.ahead_behind, Some((2, 1)));
+        let entries: Vec<(char, char, bool, bool, &str)> = read
+            .entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.index as char,
+                    entry.worktree as char,
+                    entry.unmerged,
+                    entry.untracked,
+                    entry.path.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            entries,
+            vec![
+                ('.', 'M', false, false, "src/with space.rs"),
+                ('A', '.', false, false, "added.txt"),
+                ('R', '.', false, false, "new name.txt"),
+                ('U', 'U', true, false, "conflict.txt"),
+                ('?', '?', false, true, "untracked dir/file.txt"),
+                ('D', '.', false, false, "removed.txt"),
+            ]
+        );
+
+        let initial = parse_git_status_v2("# branch.oid (initial)\0# branch.head (detached)\0");
+        assert_eq!(initial.oid, None);
+        assert_eq!(initial.branch, None);
+        assert_eq!(initial.ahead_behind, None);
     }
 
     #[test]
