@@ -111,7 +111,7 @@ export function resolvePresetSteps(
       model,
       effortSetting: option ? setting : undefined,
       effort: option?.value,
-      modelLabel: shortModelName(model),
+      modelLabel: preset.label?.trim() || shortModelName(model),
       effortLabel: option?.label,
       tone: effortTone(option?.value),
     });
@@ -224,6 +224,43 @@ export function stepAt(
   const span = trackWidth - knobSize;
   const ratio = (x - knobSize / 2) / span;
   return clamp(Math.round(ratio * (count - 1)), 0, count - 1);
+}
+
+/**
+ * How near a dot, in px, a drag has to come to land on it: about a third of
+ * the gap between dots, within 10 to 22px.
+ */
+export function snapRadius(
+  count: number,
+  trackWidth = SLIDER_TRACK_WIDTH,
+  knobSize = SLIDER_KNOB_SIZE,
+): number {
+  if (count <= 1) return trackWidth;
+  const spacing = (trackWidth - knobSize) / (count - 1);
+  return clamp(spacing * 0.32, 10, 22);
+}
+
+/**
+ * Where a drag at `x` puts the knob and which step it is on. Near a dot the
+ * knob is pulled onto it and takes its step; between dots it follows the
+ * pointer and keeps `current`, so the step only changes on arrival. Past
+ * either end counts as the end dot.
+ */
+export function dragStepAt(
+  x: number,
+  current: number,
+  count: number,
+  trackWidth = SLIDER_TRACK_WIDTH,
+  knobSize = SLIDER_KNOB_SIZE,
+): { index: number; center: number } {
+  const half = knobSize / 2;
+  const clamped = clamp(x, half, trackWidth - half);
+  if (count === 0) return { index: current, center: clamped };
+  const nearest = stepAt(clamped, count, trackWidth, knobSize);
+  const dot = stepCenter(nearest, count, trackWidth, knobSize);
+  return Math.abs(clamped - dot) <= snapRadius(count, trackWidth, knobSize)
+    ? { index: nearest, center: dot }
+    : { index: current, center: clamped };
 }
 
 /** Knob's left offset while it follows a pointer, kept on the track. */

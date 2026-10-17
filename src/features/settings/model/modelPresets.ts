@@ -9,7 +9,12 @@ export type ModelPreset = {
   model: string;
   /** Effort option value; empty for a model without an effort setting. */
   effort: string;
+  /** Name the slider shows instead of the model's own, when set. */
+  label?: string;
 };
+
+/** Long enough for a nickname, short enough for the slider's 22px title. */
+export const MODEL_PRESET_LABEL_LIMIT = 32;
 
 const MODEL_PRESETS_KEY = "monocode.modelPresets";
 const MODEL_SLIDER_HAPTICS_KEY = "monocode.modelSliderHaptics";
@@ -96,7 +101,17 @@ export function parseModelPresets(value: unknown): ModelPreset[] | null {
         : `preset-${presets.length + 1}`;
     while (ids.has(id)) id = `${id}-${presets.length + 1}`;
     ids.add(id);
-    presets.push({ id, harness: record.harness, model: record.model, effort });
+    const label =
+      typeof record.label === "string"
+        ? record.label.trim().slice(0, MODEL_PRESET_LABEL_LIMIT)
+        : "";
+    presets.push({
+      id,
+      harness: record.harness,
+      model: record.model,
+      effort,
+      ...(label ? { label } : {}),
+    });
     if (presets.length >= MODEL_PRESET_LIMIT) break;
   }
   return presets;

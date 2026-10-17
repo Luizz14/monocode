@@ -80,6 +80,8 @@
 
 .model-slider-track {
   --knob-x: 0px;
+  /* Settling on a step overshoots a little and springs back. */
+  --slider-settle: 420ms cubic-bezier(0.34, 1.45, 0.5, 1);
   background-color: var(--slider-rail);
   cursor: grab;
   outline-style: solid;
@@ -108,7 +110,7 @@
   outline: 1px solid color-mix(in srgb, var(--color-content) 40%, transparent);
   outline-offset: -2px;
   transition:
-    width 180ms var(--motion-ease-out),
+    width var(--slider-settle),
     background-color 200ms var(--motion-ease-out);
 }
 
@@ -140,7 +142,7 @@
   outline: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
   outline-offset: -2px;
   transform: translateX(var(--knob-x));
-  transition: transform 180ms var(--motion-ease-out);
+  transition: transform var(--slider-settle);
   will-change: transform;
   pointer-events: none;
 }
@@ -154,10 +156,9 @@
   opacity: 0;
 }
 
-/* While dragging, the knob and fill follow the pointer exactly. */
-.model-slider-track[data-dragging] .model-slider-knob,
-.model-slider-track[data-dragging] .model-slider-fill {
-  transition: none;
+/* While dragging, a short glide smooths the pointer and the pull onto a dot. */
+.model-slider-track[data-dragging] {
+  --slider-settle: 110ms var(--motion-ease-out);
 }
 
 .model-slider-tiles-clip {

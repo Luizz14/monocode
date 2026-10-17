@@ -213,6 +213,36 @@ describe("model presets settings", () => {
     expect(rowLabels()[0]).toBe("gone (unavailable)");
   });
 
+  it("renames a preset on blur and clears the name when emptied", () => {
+    const input = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Preset 3 name"]',
+    )!;
+    expect(input.placeholder).toBe("Opus 5.5");
+    const setValue = (value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      act(() => {
+        setter.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    setValue("Deep work ");
+    // Nothing is saved while typing.
+    expect(loadModelPresets()[2]).not.toHaveProperty("label");
+    act(() => {
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    expect(loadModelPresets()[2].label).toBe("Deep work");
+
+    setValue("");
+    act(() => {
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    expect(loadModelPresets()[2]).not.toHaveProperty("label");
+  });
+
   it("toggles trackpad haptics", () => {
     const toggle = container.querySelector<HTMLButtonElement>(
       '[role="switch"][aria-label="Trackpad haptics"]',

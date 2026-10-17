@@ -38,6 +38,7 @@ import { HarnessIcon } from "../../sessions/ui/HarnessIcon";
 import {
   loadModelPresets,
   loadModelSliderHaptics,
+  MODEL_PRESET_LABEL_LIMIT,
   MODEL_PRESET_LIMIT,
   newModelPresetId,
   resetModelPresets,
@@ -1287,7 +1288,7 @@ function ModelPresetsGroup() {
     <Group
       id="model-presets"
       title="Model presets"
-      description="The stops on the composer's model slider, left to right. Click the model in the composer to open it; drag or use the arrow keys to switch. Max, Ultracode, and Ultrathink light the rail up."
+      description="The stops on the composer's model slider, left to right. Click the model in the composer to open it; drag or use the arrow keys to switch. Give a preset a name to show it there instead of the model's. Max, Ultracode, and Ultrathink light the rail up."
       action={
         <SecondaryButton onClick={resetModelPresets}>
           <RotateCcw className="size-3.5" strokeWidth={1.75} />
@@ -1345,41 +1346,53 @@ function ModelPresetsGroup() {
             <span className="w-4 shrink-0 text-right text-[11px] tabular-nums text-content/35">
               {index + 1}
             </span>
-            <Select
-              label={`Preset ${index + 1} model`}
-              value={value}
-              options={options}
-              onChange={(next) => {
-                const picked = models.find(
-                  (item) => presetModelValue(item.harness, item.id) === next,
-                );
-                if (!picked) return;
-                const levels = modelEffortSetting(picked);
-                update(index, {
-                  harness: picked.harness,
-                  model: picked.id,
-                  effort: !levels
-                    ? ""
-                    : levels.options.some(
-                          (option) => option.value === preset.effort,
-                        )
-                      ? preset.effort
-                      : levels.value,
-                });
-              }}
-            />
-            {effort ? (
+            <div className="w-40 shrink-0">
               <Select
-                label={`Preset ${index + 1} effort`}
-                value={preset.effort}
-                options={effortOptions}
-                onChange={(next) => update(index, { effort: next })}
+                label={`Preset ${index + 1} model`}
+                value={value}
+                options={options}
+                onChange={(next) => {
+                  const picked = models.find(
+                    (item) => presetModelValue(item.harness, item.id) === next,
+                  );
+                  if (!picked) return;
+                  const levels = modelEffortSetting(picked);
+                  update(index, {
+                    harness: picked.harness,
+                    model: picked.id,
+                    effort: !levels
+                      ? ""
+                      : levels.options.some(
+                            (option) => option.value === preset.effort,
+                          )
+                        ? preset.effort
+                        : levels.value,
+                  });
+                }}
               />
-            ) : (
-              <span className="text-[12px] text-content/40">
-                {model ? "No effort levels" : ""}
-              </span>
-            )}
+            </div>
+            <div className="w-32 shrink-0">
+              {effort ? (
+                <Select
+                  label={`Preset ${index + 1} effort`}
+                  value={preset.effort}
+                  options={effortOptions}
+                  onChange={(next) => update(index, { effort: next })}
+                />
+              ) : (
+                <span className="text-[12px] text-content/40">
+                  {model ? "No effort levels" : ""}
+                </span>
+              )}
+            </div>
+            <PresetLabelInput
+              label={`Preset ${index + 1} name`}
+              value={preset.label ?? ""}
+              placeholder={model ? shortModelName(model) : "Name"}
+              onCommit={(next) =>
+                update(index, { label: next.trim() || undefined })
+              }
+            />
             {runnable ? null : (
               <span
                 className="text-[11px] text-content/40"
@@ -1436,6 +1449,53 @@ function ModelPresetsGroup() {
         />
       </Row>
     </Group>
+  );
+}
+
+/**
+ * The name a preset shows on the slider. Saved on blur or Enter so trimming
+ * never fights the typing; Escape puts the saved name back.
+ */
+function PresetLabelInput({
+  label,
+  value,
+  placeholder,
+  onCommit,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onCommit: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    if (draft.trim() !== value) onCommit(draft);
+  };
+  return (
+    <input
+      type="text"
+      aria-label={label}
+      title="Name on the slider; empty uses the model's"
+      value={draft}
+      placeholder={placeholder}
+      maxLength={MODEL_PRESET_LABEL_LIMIT}
+      spellCheck={false}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commit();
+          event.currentTarget.blur();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          setDraft(value);
+        }
+      }}
+      className="h-[26px] w-32 min-w-0 rounded-md border border-content/10 bg-content/5 px-2 text-[12px] text-content outline-none placeholder:text-content/35 hover:border-content/20 focus:border-content/30"
+    />
   );
 }
 

@@ -192,8 +192,15 @@ describe("ModelPresetSlider", () => {
       expect(track.hasAttribute("data-dragging")).toBe(true);
       expect(haptic).not.toHaveBeenCalled();
 
-      pointer(track, "pointermove", stepCenter(3, 6) + 4);
-      expect(knobX(track)).toBe(`${stepCenter(3, 6) + 4 - 18}px`);
+      // Halfway to the next dot the knob follows the pointer, still on High.
+      pointer(track, "pointermove", stepCenter(2, 6) + 32);
+      expect(knobX(track)).toBe(`${stepCenter(2, 6) + 32 - 18}px`);
+      expect(track.getAttribute("aria-valuetext")).toBe("Opus 5.5 High");
+      expect(haptic).not.toHaveBeenCalled();
+
+      // Near the dot it is pulled onto it and takes its step.
+      pointer(track, "pointermove", stepCenter(3, 6) - 12);
+      expect(knobX(track)).toBe(`${stepCenter(3, 6) - 18}px`);
       expect(track.getAttribute("aria-valuetext")).toBe("Opus 5.5 Max");
       expect(panel().dataset.effortTone).toBe("max");
       expect(haptic).toHaveBeenCalledTimes(1);
@@ -212,6 +219,33 @@ describe("ModelPresetSlider", () => {
       expect(onCommit).toHaveBeenCalledTimes(1);
       expect(onCommit).toHaveBeenCalledWith(4);
       expect(track.hasAttribute("data-dragging")).toBe(false);
+    });
+
+    it("holds a step between dots, even back toward the previous one", () => {
+      const { track, onCommit } = render();
+      pointer(track, "pointerdown", stepCenter(2, 6));
+      pointer(track, "pointermove", stepCenter(3, 6));
+      pointer(track, "pointermove", stepCenter(2, 6) + 25);
+      expect(track.getAttribute("aria-valuetext")).toBe("Opus 5.5 Max");
+      pointer(track, "pointerup", stepCenter(2, 6) + 25);
+      expect(onCommit).toHaveBeenCalledWith(3);
+    });
+
+    it("jumps to the nearest dot when the rail is pressed off the knob", () => {
+      const { track, onCommit } = render();
+      pointer(track, "pointerdown", stepCenter(4, 6) - 28);
+      expect(track.getAttribute("aria-valuetext")).toBe("Opus 5.5 Ultracode");
+      pointer(track, "pointerup", stepCenter(4, 6) - 28);
+      expect(onCommit).toHaveBeenCalledWith(4);
+    });
+
+    it("keeps its step when the knob is grabbed off center", () => {
+      const { track, onCommit } = render();
+      pointer(track, "pointerdown", stepCenter(2, 6) + 16);
+      expect(track.getAttribute("aria-valuetext")).toBe("Opus 5.5 High");
+      expect(haptic).not.toHaveBeenCalled();
+      pointer(track, "pointerup", stepCenter(2, 6) + 16);
+      expect(onCommit).not.toHaveBeenCalled();
     });
 
     it("jumps to a clicked dot", () => {

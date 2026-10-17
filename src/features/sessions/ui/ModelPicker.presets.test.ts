@@ -187,6 +187,30 @@ describe("model picker presets", () => {
     expect(slider()).toBeNull();
   });
 
+  it("shows a preset's own name while the session is on it", () => {
+    saveModelPresets([
+      {
+        id: "a",
+        harness: "claude",
+        model: "claude:sonnet-5",
+        effort: "low",
+        label: "Quick",
+      },
+      {
+        id: "b",
+        harness: "claude",
+        model: "claude:opus-5-5",
+        effort: "high",
+        label: "Deep",
+      },
+    ]);
+    const { trigger } = render();
+    act(() => trigger.click());
+    expect(slider()!.getAttribute("aria-valuetext")).toBe("Deep High");
+    // The chip keeps the model's real name.
+    expect(trigger.textContent).toContain("Opus 5.5");
+  });
+
   it("switches effort alone when the model stays", () => {
     const { trigger, onChange, onSettingsChange } = render();
     act(() => trigger.click());

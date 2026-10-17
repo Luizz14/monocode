@@ -10,6 +10,8 @@ import {
   stepAt,
   stepCenter,
   stepForKey,
+  dragStepAt,
+  snapRadius,
   suggestModelPreset,
   type PresetModelSource,
 } from "./modelPresetSteps";
@@ -176,6 +178,18 @@ describe("resolvePresetSteps", () => {
     expect(steps.map((step) => step.model.id)).toEqual([gpt.id]);
   });
 
+  it("shows a preset's own name instead of the model's", () => {
+    const [named, plainName] = resolvePresetSteps(
+      [
+        { ...preset(opus.id, "max"), label: "  Big brain  " },
+        { ...preset(opus.id, "low"), label: "   " },
+      ],
+      catalog,
+    );
+    expect(named.modelLabel).toBe("Big brain");
+    expect(plainName.modelLabel).toBe("Opus 5.5");
+  });
+
   it("keeps model-only presets for models without an effort setting", () => {
     const [step] = resolvePresetSteps(
       [preset(plain.id, "high", "cursor")],
@@ -262,6 +276,21 @@ describe("track geometry", () => {
         expect(stepAt(stepCenter(i, count), count)).toBe(i);
       }
     }
+  });
+
+  it("lands on a dot only near it", () => {
+    expect(snapRadius(6)).toBeCloseTo(19.58, 1);
+    expect(snapRadius(2)).toBe(22);
+    expect(snapRadius(10)).toBe(10.88);
+    const center = stepCenter(3, 6);
+    expect(dragStepAt(center + 19, 1, 6)).toEqual({ index: 3, center });
+    expect(dragStepAt(center + 25, 1, 6)).toEqual({
+      index: 1,
+      center: center + 25,
+    });
+    expect(dragStepAt(-50, 3, 6)).toEqual({ index: 0, center: 18 });
+    expect(dragStepAt(900, 0, 6)).toEqual({ index: 5, center: 324 });
+    expect(dragStepAt(100, -1, 0)).toEqual({ index: -1, center: 100 });
   });
 
   it("keeps the knob on the track", () => {

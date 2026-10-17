@@ -69,6 +69,18 @@ describe("parseModelPresets", () => {
     ]);
   });
 
+  it("keeps a trimmed, capped name and drops an empty one", () => {
+    const [named, blank] = parseModelPresets([
+      { ...opusHigh, label: "  Deep work  " },
+      { ...opusHigh, id: "b", label: "   " },
+    ])!;
+    expect(named.label).toBe("Deep work");
+    expect(blank).not.toHaveProperty("label");
+    expect(
+      parseModelPresets([{ ...opusHigh, label: "x".repeat(80) }])![0].label,
+    ).toHaveLength(32);
+  });
+
   it("caps the list", () => {
     const many = Array.from({ length: MODEL_PRESET_LIMIT + 4 }, (_, i) => ({
       id: `p${i}`,

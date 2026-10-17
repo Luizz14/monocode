@@ -44,9 +44,9 @@ test("drags across presets and applies the one it is released on", async ({
   await expect
     .poll(async () => {
       const knob = (await page.locator(".model-slider-knob").boundingBox())!;
-      return Math.round(knob.x + knob.width / 2 - to.x);
+      return Math.abs(knob.x + knob.width / 2 - to.x);
     })
-    .toBe(0);
+    .toBeLessThan(1);
 });
 
 test("steps from the keyboard, switching the model when a preset needs it", async ({

@@ -440,6 +440,9 @@ export function ModelPicker({
     );
   }, [presetSlider, presets, source, catalogVersion, providerKey]);
   const sliderReady = presetSteps.length >= 2;
+  const presetIndex = sliderReady
+    ? currentStepIndex(presetSteps, current, values)
+    : -1;
   const panelVisible = panelOpen && sliderReady;
   const currentEffortSetting = effortSetting(current);
   const currentEffortValue = currentEffortSetting
@@ -866,8 +869,11 @@ export function ModelPicker({
         >
           <ModelPresetSlider
             steps={presetSteps}
-            index={currentStepIndex(presetSteps, current, values)}
-            modelLabel={triggerModelName}
+            index={presetIndex}
+            // A preset's own name wins while the session sits on it.
+            modelLabel={
+              presetSteps[presetIndex]?.modelLabel ?? triggerModelName
+            }
             effortLabel={
               currentEffortSetting
                 ? settingValueLabel(currentEffortSetting, values)

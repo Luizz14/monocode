@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
-  knobOffsetAt,
+  dragStepAt,
   SLIDER_KNOB_SIZE,
   stepAt,
   stepCenter,
@@ -102,15 +102,20 @@ export function ModelPresetSlider({
   const pointerX = (event: ReactPointerEvent<HTMLDivElement>) =>
     event.clientX - (track.current?.getBoundingClientRect().left ?? 0);
 
-  const follow = (x: number) => {
+  const moveTo = (next: number) => {
     const current = drag.current;
-    if (!current) return;
-    track.current?.style.setProperty("--knob-x", `${knobOffsetAt(x)}px`);
-    const next = stepAt(x, count);
-    if (next === current.index) return;
+    if (!current || next === current.index) return;
     current.index = next;
     if (haptics) performHaptic("levelChange");
     setDragIndex(next);
+  };
+
+  const follow = (x: number) => {
+    const current = drag.current;
+    if (!current) return;
+    const { index: next, center } = dragStepAt(x, current.index, count);
+    track.current?.style.setProperty("--knob-x", `${center - KNOB_HALF}px`);
+    moveTo(next);
   };
 
   const finish = (commit: boolean) => {
@@ -133,9 +138,15 @@ export function ModelPresetSlider({
     } catch {
       // A synthetic or already-released pointer cannot be captured.
     }
+    const x = pointerX(event);
     drag.current = { pointerId: event.pointerId, index };
     setDragIndex(index >= 0 ? index : null);
-    follow(pointerX(event));
+    // Grabbing the knob keeps its step; pressing anywhere else on the rail
+    // jumps to the nearest dot.
+    const onKnob =
+      index >= 0 && Math.abs(x - stepCenter(index, count)) <= KNOB_HALF;
+    if (!onKnob) moveTo(stepAt(x, count));
+    follow(x);
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
