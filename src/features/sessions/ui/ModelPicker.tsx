@@ -854,15 +854,25 @@ export function ModelPicker({
         )}
         <RollText
           text={triggerLabel ?? triggerModelName}
-          className={`whitespace-nowrap ${pillSized ? "text-[11px]" : ""} ${
-            variant === "ghost" ? "font-semibold" : ""
+          className={`whitespace-nowrap ${
+            variant === "ghost"
+              ? // The composer's chip sets the model like the slider panel
+                // does, in its bundled faces, sized to the chip.
+                "model-slider-model text-[12px] font-medium"
+              : pillSized
+                ? "text-[11px]"
+                : ""
           } ${labelClassName}`}
         />
         {!triggerLabel && triggerEffortLabel ? (
           <RollText
             text={triggerEffortLabel}
-            className={`shrink-0 text-content/50 ${pillSized ? "text-[11px]" : ""} ${
-              variant === "ghost" ? "italic" : ""
+            className={`shrink-0 text-content/50 ${
+              variant === "ghost"
+                ? "model-slider-effort text-[12px] italic"
+                : pillSized
+                  ? "text-[11px]"
+                  : ""
             } ${labelClassName}`}
           />
         ) : null}

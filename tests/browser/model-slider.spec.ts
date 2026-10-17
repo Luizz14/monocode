@@ -193,12 +193,17 @@ test("keeps the fill's end under the knob's center through a drag", async ({
     gaps.push(gap);
     centers.push(center - box.x);
   }
+  // Pause at the end so the knob arrives before the way back.
+  await page.waitForTimeout(250);
+  centers.push((await sample()).center - box.x);
   for (let x = 330; x >= 40; x -= 9) {
     await page.mouse.move(box.x + x, y);
     const { gap, center } = await sample();
     gaps.push(gap);
     centers.push(center - box.x);
   }
+  await page.waitForTimeout(250);
+  centers.push((await sample()).center - box.x);
   await page.mouse.move(box.x + 120, y);
   await page.mouse.up();
   for (let i = 0; i < 25; i += 1) {
@@ -295,4 +300,68 @@ test("marks keyboard focus with a glow, not a ring", async ({ page }) => {
   const box = (await track.boundingBox())!;
   await page.mouse.click(box.x + 48, box.y + 13);
   await expect.poll(async () => (await looks()).glow).toBe("none");
+});
+
+test("sets the composer chip in the bundled faces", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/tests/browser/model-slider.html?view=active");
+  const chip = page.locator("[data-model-picker-trigger]");
+  await expect(chip).toBeVisible();
+  // Nothing opened: the chip alone has to bring the faces in.
+  const result = await page.evaluate(async () => {
+    await document.fonts.ready;
+    const chip = document.querySelector("[data-model-picker-trigger]")!;
+    const name = chip.querySelector<HTMLElement>(".model-slider-model")!;
+    const effort = chip.querySelector<HTMLElement>(".model-slider-effort")!;
+    const probe = (text: string, font: string) => {
+      const span = document.createElement("span");
+      span.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${font}`;
+      span.textContent = text;
+      document.body.append(span);
+      const width = span.getBoundingClientRect().width;
+      span.remove();
+      return width;
+    };
+    const nameText = name.textContent!;
+    const effortText = effort.textContent!;
+    return {
+      nameFont: getComputedStyle(name).fontFamily,
+      effortFont: getComputedStyle(effort).fontFamily,
+      nameWeight: getComputedStyle(name).fontWeight,
+      effortStyle: getComputedStyle(effort).fontStyle,
+      monoLoaded: document.fonts.check(
+        '500 12px "MonoCode Slider Mono"',
+        nameText,
+      ),
+      serifLoaded: document.fonts.check(
+        'italic 400 12px "MonoCode Slider Serif"',
+        effortText,
+      ),
+      name: name.getBoundingClientRect().width,
+      nameBundled: probe(nameText, '500 12px "MonoCode Slider Mono"'),
+      nameSystem: probe(nameText, "500 12px ui-monospace"),
+      effort: effort.getBoundingClientRect().width,
+      effortBundled: probe(
+        effortText,
+        'italic 400 12px "MonoCode Slider Serif"',
+      ),
+      effortSystem: probe(effortText, "italic 400 12px Georgia"),
+    };
+  });
+  const note = JSON.stringify(result);
+  testInfo.annotations.push({ type: "chip fonts", description: note });
+  console.log(`chip fonts: ${note}`);
+  expect(result.nameFont).toMatch(/^"?MonoCode Slider Mono/);
+  expect(result.effortFont).toMatch(/^"?MonoCode Slider Serif/);
+  expect(result.nameWeight).toBe("500");
+  expect(result.effortStyle).toBe("italic");
+  expect(result.monoLoaded).toBe(true);
+  expect(result.serifLoaded).toBe(true);
+  expect(Math.abs(result.name - result.nameBundled)).toBeLessThan(0.5);
+  expect(Math.abs(result.nameBundled - result.nameSystem)).toBeGreaterThan(1);
+  expect(Math.abs(result.effort - result.effortBundled)).toBeLessThan(0.5);
+  expect(Math.abs(result.effortBundled - result.effortSystem)).toBeGreaterThan(
+    1,
+  );
 });

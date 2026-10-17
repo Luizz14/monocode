@@ -297,7 +297,7 @@ describe("model picker presets", () => {
     expect(container.querySelector('[role="menu"]')).not.toBeNull();
   });
 
-  it("draws the ghost chip without a fill, effort in italics", () => {
+  it("draws the ghost chip without a fill, in the slider panel's faces", () => {
     const { trigger } = render();
     expect(trigger.className).not.toContain("bg-selection ");
     expect(trigger.className).toContain("hover:bg-selection");
@@ -305,9 +305,26 @@ describe("model picker presets", () => {
       "span.whitespace-nowrap, span.shrink-0.text-content\\/50",
     );
     expect(name.textContent).toBe("Opus 5.5");
-    expect(name.className).toContain("font-semibold");
+    // The bundled mono at its one weight, the serif italic beside it, both
+    // at one size, as in the panel.
+    expect(name.className.split(/\s+/)).toEqual(
+      expect.arrayContaining([
+        "model-slider-model",
+        "font-medium",
+        "text-[12px]",
+      ]),
+    );
+    expect(name.className).not.toContain("font-semibold");
     expect(level.textContent).toBe("High");
-    expect(level.className).toContain("italic");
+    expect(level.className.split(/\s+/)).toEqual(
+      expect.arrayContaining(["model-slider-effort", "italic", "text-[12px]"]),
+    );
+  });
+
+  it("keeps other chips in the interface font", () => {
+    const { trigger } = render({ variant: "pill" });
+    expect(trigger.querySelector(".model-slider-model")).toBeNull();
+    expect(trigger.querySelector(".model-slider-effort")).toBeNull();
   });
 
   it("marks the chip with the model family's icon, name kept", () => {
