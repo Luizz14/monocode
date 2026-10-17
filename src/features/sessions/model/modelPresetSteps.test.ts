@@ -3,7 +3,6 @@ import type { ModelPreset } from "../../settings/model/modelPresets";
 import {
   currentStepIndex,
   effortTone,
-  knobOffsetAt,
   presetStepSettings,
   resolvePresetSteps,
   shortModelName,
@@ -11,6 +10,9 @@ import {
   stepCenter,
   stepForKey,
   dragStepAt,
+  SLIDER_KNOB_SIZE,
+  SLIDER_LEAD,
+  sliderStops,
   snapRadius,
   suggestModelPreset,
   type PresetModelSource,
@@ -251,21 +253,30 @@ describe("presetStepSettings", () => {
 });
 
 describe("track geometry", () => {
-  it("places six dots where the design does", () => {
+  it("places six dots from a 30px lead to the right end", () => {
     expect(
       Array.from({ length: 6 }, (_, i) => stepCenter(i, 6)).map((x) =>
         Number(x.toFixed(1)),
       ),
-    ).toEqual([18, 79.2, 140.4, 201.6, 262.8, 324]);
+    ).toEqual([48, 103.2, 158.4, 213.6, 268.8, 324]);
+    expect(sliderStops()).toEqual({ first: 48, last: 324 });
     expect(stepCenter(0, 1)).toBe(171);
+  });
+
+  it("leaves the first step's fill showing beside the knob", () => {
+    // The fill runs to the knob's center; the knob's left edge is where the
+    // visible fill stops.
+    for (const count of [2, 6, 10]) {
+      expect(stepCenter(0, count) - SLIDER_KNOB_SIZE / 2).toBe(SLIDER_LEAD);
+    }
   });
 
   it("maps a pointer to the nearest step, clamped to the ends", () => {
     expect(stepAt(-40, 6)).toBe(0);
-    expect(stepAt(18, 6)).toBe(0);
     expect(stepAt(48, 6)).toBe(0);
-    expect(stepAt(50, 6)).toBe(1);
-    expect(stepAt(140, 6)).toBe(2);
+    expect(stepAt(75, 6)).toBe(0);
+    expect(stepAt(76, 6)).toBe(1);
+    expect(stepAt(158, 6)).toBe(2);
     expect(stepAt(400, 6)).toBe(5);
     expect(stepAt(100, 1)).toBe(0);
   });
@@ -279,24 +290,18 @@ describe("track geometry", () => {
   });
 
   it("lands on a dot only near it", () => {
-    expect(snapRadius(6)).toBeCloseTo(19.58, 1);
+    expect(snapRadius(6)).toBeCloseTo(17.66, 1);
     expect(snapRadius(2)).toBe(22);
-    expect(snapRadius(10)).toBe(10.88);
+    expect(snapRadius(10)).toBe(10);
     const center = stepCenter(3, 6);
-    expect(dragStepAt(center + 19, 1, 6)).toEqual({ index: 3, center });
+    expect(dragStepAt(center + 17, 1, 6)).toEqual({ index: 3, center });
     expect(dragStepAt(center + 25, 1, 6)).toEqual({
       index: 1,
       center: center + 25,
     });
-    expect(dragStepAt(-50, 3, 6)).toEqual({ index: 0, center: 18 });
+    expect(dragStepAt(-50, 3, 6)).toEqual({ index: 0, center: 48 });
     expect(dragStepAt(900, 0, 6)).toEqual({ index: 5, center: 324 });
     expect(dragStepAt(100, -1, 0)).toEqual({ index: -1, center: 100 });
-  });
-
-  it("keeps the knob on the track", () => {
-    expect(knobOffsetAt(0)).toBe(0);
-    expect(knobOffsetAt(100)).toBe(82);
-    expect(knobOffsetAt(500)).toBe(306);
   });
 });
 

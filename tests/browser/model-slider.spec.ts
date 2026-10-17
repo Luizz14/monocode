@@ -13,7 +13,7 @@ async function openSlider(page: Page) {
 /** Page x of a step's dot on the default six-stop rail. */
 async function dotX(track: Locator, index: number) {
   const box = (await track.boundingBox())!;
-  return { x: box.x + 18 + (index * 306) / 5, y: box.y + box.height / 2 };
+  return { x: box.x + 48 + (index * 276) / 5, y: box.y + box.height / 2 };
 }
 
 test("drags across presets and applies the one it is released on", async ({

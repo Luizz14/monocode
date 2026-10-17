@@ -200,9 +200,23 @@ export function suggestModelPreset(
 /** Track geometry from the design: a 342px rail and a 36px knob. */
 export const SLIDER_TRACK_WIDTH = 342;
 export const SLIDER_KNOB_SIZE = 36;
+/**
+ * How far right of the knob's leftmost position the first stop sits. The
+ * fill runs to the knob's center, so in the design the first step's fill
+ * hides under the knob; this lead leaves 30px of it showing.
+ */
+export const SLIDER_LEAD = 30;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+/** The first and last stop centers, from the track's left edge. */
+export function sliderStops(
+  trackWidth = SLIDER_TRACK_WIDTH,
+  knobSize = SLIDER_KNOB_SIZE,
+): { first: number; last: number } {
+  return { first: knobSize / 2 + SLIDER_LEAD, last: trackWidth - knobSize / 2 };
 }
 
 /** Horizontal center of a step's dot, from the track's left edge. */
@@ -213,8 +227,8 @@ export function stepCenter(
   knobSize = SLIDER_KNOB_SIZE,
 ): number {
   if (count <= 1) return trackWidth / 2;
-  const span = trackWidth - knobSize;
-  return knobSize / 2 + (clamp(index, 0, count - 1) * span) / (count - 1);
+  const { first, last } = sliderStops(trackWidth, knobSize);
+  return first + (clamp(index, 0, count - 1) * (last - first)) / (count - 1);
 }
 
 /** The step nearest a pointer at `x` pixels from the track's left edge. */
@@ -225,8 +239,8 @@ export function stepAt(
   knobSize = SLIDER_KNOB_SIZE,
 ): number {
   if (count <= 1) return 0;
-  const span = trackWidth - knobSize;
-  const ratio = (x - knobSize / 2) / span;
+  const { first, last } = sliderStops(trackWidth, knobSize);
+  const ratio = (x - first) / (last - first);
   return clamp(Math.round(ratio * (count - 1)), 0, count - 1);
 }
 
@@ -240,15 +254,15 @@ export function snapRadius(
   knobSize = SLIDER_KNOB_SIZE,
 ): number {
   if (count <= 1) return trackWidth;
-  const spacing = (trackWidth - knobSize) / (count - 1);
-  return clamp(spacing * 0.32, 10, 22);
+  const { first, last } = sliderStops(trackWidth, knobSize);
+  return clamp(((last - first) / (count - 1)) * 0.32, 10, 22);
 }
 
 /**
- * Where a drag at `x` puts the knob and which step it is on. Near a dot the
- * knob is pulled onto it and takes its step; between dots it follows the
- * pointer and keeps `current`, so the step only changes on arrival. Past
- * either end counts as the end dot.
+ * Where a drag at `x` puts the knob's center and which step it is on. Near a
+ * dot the knob is pulled onto it and takes its step; between dots it
+ * follows the pointer and keeps `current`, so the step only changes on
+ * arrival. Past either end counts as the end dot.
  */
 export function dragStepAt(
   x: number,
@@ -257,23 +271,14 @@ export function dragStepAt(
   trackWidth = SLIDER_TRACK_WIDTH,
   knobSize = SLIDER_KNOB_SIZE,
 ): { index: number; center: number } {
-  const half = knobSize / 2;
-  const clamped = clamp(x, half, trackWidth - half);
+  const { first, last } = sliderStops(trackWidth, knobSize);
+  const clamped = clamp(x, first, last);
   if (count === 0) return { index: current, center: clamped };
   const nearest = stepAt(clamped, count, trackWidth, knobSize);
   const dot = stepCenter(nearest, count, trackWidth, knobSize);
   return Math.abs(clamped - dot) <= snapRadius(count, trackWidth, knobSize)
     ? { index: nearest, center: dot }
     : { index: current, center: clamped };
-}
-
-/** Knob's left offset while it follows a pointer, kept on the track. */
-export function knobOffsetAt(
-  x: number,
-  trackWidth = SLIDER_TRACK_WIDTH,
-  knobSize = SLIDER_KNOB_SIZE,
-): number {
-  return clamp(x - knobSize / 2, 0, trackWidth - knobSize);
 }
 
 /**

@@ -233,9 +233,9 @@ describe("ModelPresetSlider", () => {
 
     it("jumps to the nearest dot when the rail is pressed off the knob", () => {
       const { track, onCommit } = render();
-      pointer(track, "pointerdown", stepCenter(4, 6) - 28);
+      pointer(track, "pointerdown", stepCenter(4, 6) - 24);
       expect(track.getAttribute("aria-valuetext")).toBe("Opus 5.5 Ultracode");
-      pointer(track, "pointerup", stepCenter(4, 6) - 28);
+      pointer(track, "pointerup", stepCenter(4, 6) - 24);
       expect(onCommit).toHaveBeenCalledWith(4);
     });
 
@@ -261,7 +261,7 @@ describe("ModelPresetSlider", () => {
       const { track, onCommit } = render();
       pointer(track, "pointerdown", stepCenter(2, 6));
       pointer(track, "pointermove", -200);
-      expect(knobX(track)).toBe("0px");
+      expect(knobX(track)).toBe(`${stepCenter(0, 6) - 18}px`);
       pointer(track, "pointerup", -200);
       expect(onCommit).toHaveBeenCalledWith(0);
     });
