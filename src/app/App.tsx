@@ -745,7 +745,8 @@ import {
 import {
   handleEditorFindKey,
   openFindInActiveEditor,
-} from "../features/files/editor/editorSearch";
+  preloadEditorFind,
+} from "../features/files/editor/editorFind";
 
 import {
   mergeHistorySummary,
@@ -1559,6 +1560,8 @@ function Workspace({
         ...(notesEnabled ? [NotesView.preload, loadNotes] : []),
         // The first code block otherwise compiles its grammar on arrival.
         warmCodeHighlighting,
+        // Cmd+F reaches the editor's find once its module is here.
+        preloadEditorFind,
       ]),
     [notesEnabled],
   );

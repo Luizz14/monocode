@@ -28,10 +28,8 @@ import {
 } from "@codemirror/view";
 import { MOD, ALT, SHIFT } from "../../../platform/tauri/platform";
 import { keybindingPressed } from "../../settings/model/settings";
-import {
-  handleFilePreviewFindKey,
-  openFindInActiveFilePreview,
-} from "../ui/FilePreviewSearch";
+import { openFindInActiveFilePreview } from "../ui/FilePreviewSearch";
+import { handleFindKeyWithoutEditor, registerEditorFind } from "./editorFind";
 
 const MATCH_CAP = 999;
 const panels = new WeakMap<EditorView, FindPanel>();
@@ -62,18 +60,8 @@ export function matchIndexAtSelection(
 }
 
 export function handleEditorFindKey(event: KeyboardEvent): boolean {
-  if (event.isComposing) return false;
-
-  const target = event.target instanceof Element ? event.target : null;
-  if (
-    target?.closest(
-      "[data-file-picker], [data-model-picker], [data-branch-picker], [data-skill-picker], [data-mention-picker]",
-    )
-  ) {
-    return false;
-  }
-
-  if (handleFilePreviewFindKey(event)) return true;
+  const withoutEditor = handleFindKeyWithoutEditor(event);
+  if (withoutEditor !== undefined) return withoutEditor;
 
   const view = editorViewForFind();
   const mod = event.metaKey || event.ctrlKey;
@@ -81,13 +69,6 @@ export function handleEditorFindKey(event: KeyboardEvent): boolean {
 
   const defaultReplace = mod && event.altKey && !event.shiftKey && key === "f";
   const defaultFind = mod && !event.altKey && !event.shiftKey && key === "f";
-  if (
-    (defaultReplace && !keybindingPressed("Editor: Replace", event, true)) ||
-    (defaultFind && !keybindingPressed("Editor: Find", event, true))
-  ) {
-    event.preventDefault();
-    return true;
-  }
 
   if (keybindingPressed("Editor: Replace", event, defaultReplace)) {
     if (!view) return false;
@@ -860,3 +841,6 @@ export const editorSearch: Extension = [
   Prec.high(keymap.of(findKeymap())),
   findTheme,
 ];
+
+// App dispatches the window's find keys here once this module is loaded.
+registerEditorFind({ handleEditorFindKey, openFindInActiveEditor });
