@@ -500,3 +500,47 @@ describe("GitChangesPanel remote pull request", () => {
     expect(openUrl).toHaveBeenCalledWith("https://example.test/pull/42");
   });
 });
+
+describe("GitChangesPanel polling", () => {
+  it("polls every two seconds while focused and every ten while another app is in front", async () => {
+    vi.mocked(gitDiffIndex).mockResolvedValue(index());
+    let focused = true;
+    vi.spyOn(document, "hasFocus").mockImplementation(() => focused);
+    await renderPanel();
+    const reads = () => vi.mocked(gitDiffIndex).mock.calls.length;
+    const initial = reads();
+    const seen: number[] = [];
+    for (let tick = 1; tick <= 3; tick += 1) {
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+      });
+      seen.push(reads() - initial);
+    }
+    expect(seen).toEqual([1, 2, 3]);
+
+    focused = false;
+    const beforeBlur = reads();
+    for (let tick = 1; tick <= 4; tick += 1) {
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+      });
+      expect(reads()).toBe(beforeBlur);
+    }
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(reads()).toBe(beforeBlur + 1);
+
+    // Coming back reloads at once, then the two-second cadence resumes.
+    focused = true;
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    const afterFocus = reads();
+    expect(afterFocus).toBe(beforeBlur + 2);
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(reads()).toBe(afterFocus + 1);
+  });
+});

@@ -83,6 +83,11 @@ import { isRemoteProjectPath } from "../../projects/model/recents";
 import { RollNumber } from "../../../shared/ui/RollText";
 
 const GIT_POLL_MS = 2000;
+/**
+ * Polls between focus events while another app is in front. Returning
+ * focus reloads at once, so what the user sees on coming back is current.
+ */
+const GIT_UNFOCUSED_POLL_TICKS = 5;
 
 function confirmNative(message: string, okLabel?: string): Promise<boolean> {
   return ask(message, {
@@ -1666,11 +1671,24 @@ function useDiffIndex(
       }
     };
 
-    void load();
-    const onResume = () => {
-      if (!document.hidden) void load();
+    let ticksSinceLoad = 0;
+    const poll = () => {
+      ticksSinceLoad = 0;
+      void load();
     };
-    const timer = window.setInterval(onResume, GIT_POLL_MS);
+    poll();
+    const onResume = () => {
+      if (!document.hidden) poll();
+    };
+    const onTick = () => {
+      ticksSinceLoad += 1;
+      if (document.hidden) return;
+      const focused =
+        typeof document.hasFocus !== "function" || document.hasFocus();
+      if (!focused && ticksSinceLoad < GIT_UNFOCUSED_POLL_TICKS) return;
+      poll();
+    };
+    const timer = window.setInterval(onTick, GIT_POLL_MS);
     window.addEventListener("focus", onResume);
     document.addEventListener("visibilitychange", onResume);
     const unsubGit = subscribeGitChanged(onResume);
