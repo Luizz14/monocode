@@ -128,8 +128,8 @@ const MENU_WIDTH = 250;
 const MODEL_MENU_WIDTH = 310;
 const SETTING_MENU_WIDTH = 210;
 const SUBMENU_OVERLAP = -4;
-/** The slider panel: a 342px rail, 12px padding, and a 1px frame each side. */
-const PRESET_PANEL_WIDTH = 368;
+/** The slider panel: its 342px rail plus 12px padding each side. */
+const PRESET_PANEL_WIDTH = 366;
 const SELF = "[data-model-picker]";
 const TRIGGER = "[data-model-picker-trigger]";
 
@@ -880,6 +880,8 @@ export function ModelPicker({
           side={side}
           width={PRESET_PANEL_WIDTH}
           rounded="rounded-3xl"
+          // The design's panel line: 1px, 2px inside its edge.
+          insetLine
           ignore={`${SELF}, ${TRIGGER}`}
           onDismiss={(reason) => dismiss(reason === "escape")}
           role="dialog"
