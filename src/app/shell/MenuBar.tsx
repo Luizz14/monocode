@@ -33,6 +33,7 @@ type Props = {
   onSearch?: () => void;
   onOpenInbox?: () => void;
   onOpenNotes?: () => void;
+  onOpenBoards?: () => void;
   onZoomIn?: () => void;
   onZoomOut?: () => void;
   onZoomReset?: () => void;
@@ -54,6 +55,7 @@ export function MenuBar({
   onSearch,
   onOpenInbox,
   onOpenNotes,
+  onOpenBoards,
   onZoomIn,
   onZoomOut,
   onZoomReset,
@@ -162,6 +164,9 @@ export function MenuBar({
         case "open_notes":
           onOpenNotes?.();
           break;
+        case "open_boards":
+          onOpenBoards?.();
+          break;
         case "go_to_file":
           onGoToFile?.();
           break;
@@ -223,6 +228,7 @@ export function MenuBar({
       onSearch,
       onOpenInbox,
       onOpenNotes,
+      onOpenBoards,
       onShowSourceControl,
       onToggleSidebar,
       onToggleSessionSidebar,
@@ -330,6 +336,9 @@ export function MenuBar({
             ),
           },
           { kind: "item", id: "open_inbox", label: "Inbox" },
+          ...(onOpenBoards
+            ? [{ kind: "item" as const, id: "open_boards", label: "Boards" }]
+            : []),
           ...(onOpenNotes
             ? [{ kind: "item" as const, id: "open_notes", label: "Notes" }]
             : []),

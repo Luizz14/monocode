@@ -5,6 +5,7 @@ import {
   FolderPlus,
   Internet,
   Inbox,
+  Kanban,
   MoreHorizontal,
   Pin,
   PinOff,
@@ -112,6 +113,8 @@ type Props = {
   notesActive?: boolean;
   onOpenAutomations?: () => void;
   automationsActive?: boolean;
+  onOpenBoards?: () => void;
+  boardsActive?: boolean;
   onTogglePanel?: () => void;
   onSelectProject: (path: string) => void;
   onOpenProject: () => void;
@@ -153,6 +156,8 @@ export function ProjectRail({
   notesActive = false,
   onOpenAutomations,
   automationsActive = false,
+  onOpenBoards,
+  boardsActive = false,
   onTogglePanel,
   onSelectProject,
   onOpenProject,
@@ -340,6 +345,7 @@ export function ProjectRail({
     inboxActive ||
     notesActive ||
     automationsActive ||
+    boardsActive ||
     !!monos?.activeId;
   const pinnedIds = sections.pinned.map((item) => item.path);
   const projectIds = groupedProjectSections.ungrouped.map((item) => item.path);
@@ -407,6 +413,15 @@ export function ProjectRail({
               dot={inboxUnseen}
               ariaLabel={inboxUnseen ? "Inbox, new items" : "Inbox"}
             />
+            {onOpenBoards ? (
+              <RailAction
+                label="Boards"
+                icon={Kanban}
+                onClick={onOpenBoards}
+                active={boardsActive}
+                ariaLabel="Boards"
+              />
+            ) : null}
             {notesEnabled ? (
               <RailAction
                 label="Notes"

@@ -270,6 +270,7 @@ describe.each([false, true])("Mono rail selection (compact: %s)", (compact) => {
     ["Inbox", "inboxActive", "onOpenInbox"],
     ["Notes", "notesActive", "onOpenNotes"],
     ["Automations", "automationsActive", "onOpenAutomations"],
+    ["Boards", "boardsActive", "onOpenBoards"],
     ["Search", "searchActive", "onSearch"],
   ] as const)("selects only %s while it covers a Mono", async (label, active, open) => {
     const mono = createMono();
@@ -1586,6 +1587,7 @@ describe("collapsed rail Inbox actions", () => {
     props.onOpenInbox = vi.fn();
     props.onOpenNotes = vi.fn();
     props.onOpenAutomations = vi.fn();
+    props.onOpenBoards = vi.fn();
     props.onOpenSettings = vi.fn();
     props.onToggleProjectRail = vi.fn();
     await act(async () => render());
@@ -1618,6 +1620,7 @@ describe("collapsed rail Inbox actions", () => {
       "Changes",
       "Search",
       "Inbox",
+      "Boards",
       "Notes",
       "Automations",
       "Settings",

@@ -323,7 +323,11 @@ fn linear_authorization(token: &str) -> String {
         .to_string()
 }
 
-fn graphql_with_token(token: &str, query: &str, variables: Value) -> Result<Value, String> {
+pub(crate) fn graphql_with_token(
+    token: &str,
+    query: &str,
+    variables: Value,
+) -> Result<Value, String> {
     let authorization = linear_authorization(token);
     let agent = ureq::AgentBuilder::new().timeout(HTTP_TIMEOUT).build();
     let payload = serde_json::to_string(&json!({ "query": query, "variables": variables }))
@@ -606,7 +610,7 @@ fn parse_linear_comment_create(data: &Value) -> Result<String, String> {
         .unwrap_or_default())
 }
 
-fn valid_linear_id(id: &str) -> bool {
+pub(crate) fn valid_linear_id(id: &str) -> bool {
     let id = id.trim();
     !id.is_empty()
         && id.len() < 128
@@ -615,7 +619,7 @@ fn valid_linear_id(id: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
 }
 
-fn parse_labels(node: &Value) -> Vec<LinearLabel> {
+pub(crate) fn parse_labels(node: &Value) -> Vec<LinearLabel> {
     node.pointer("/labels/nodes")
         .and_then(Value::as_array)
         .map(|nodes| {
@@ -640,7 +644,7 @@ fn parse_assignees(node: &Value) -> Vec<LinearAssignee> {
         .unwrap_or_default()
 }
 
-fn person_fields(node: Option<&Value>) -> (Option<String>, String) {
+pub(crate) fn person_fields(node: Option<&Value>) -> (Option<String>, String) {
     let Some(node) = node else {
         return (None, String::new());
     };
@@ -658,7 +662,7 @@ fn display_name(node: Option<&Value>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn string_field(value: &Value, key: &str) -> Option<String> {
+pub(crate) fn string_field(value: &Value, key: &str) -> Option<String> {
     value
         .get(key)
         .and_then(Value::as_str)
@@ -689,7 +693,7 @@ fn read_token(app: &AppHandle) -> Result<Option<String>, String> {
     }
 }
 
-fn require_token(app: &AppHandle) -> Result<String, String> {
+pub(crate) fn require_token(app: &AppHandle) -> Result<String, String> {
     read_token(app)?.ok_or_else(|| "Connect Linear in Settings".to_string())
 }
 

@@ -3,6 +3,7 @@ use tauri::Manager;
 mod account_identity;
 mod artifacts;
 mod automations;
+mod azure_boards;
 mod azure_devops;
 mod azure_pipelines;
 mod chat_background;
@@ -22,6 +23,7 @@ mod inbox_media;
 mod jira;
 mod jsonc;
 mod linear;
+mod linear_boards;
 mod link_preview;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -419,6 +421,13 @@ pub fn run() {
             azure_devops::azure_devops_work_item_thread,
             azure_devops::azure_devops_work_item_comment,
             azure_devops::azure_devops_mr_diff,
+            azure_boards::azure_boards_projects,
+            azure_boards::azure_boards_teams,
+            azure_boards::azure_boards_team_setup,
+            azure_boards::azure_boards_areas,
+            azure_boards::azure_boards_board,
+            azure_boards::azure_boards_query,
+            azure_boards::azure_boards_move,
             linear::linear_status,
             linear::linear_set_token,
             linear::linear_list_teams,
@@ -426,6 +435,9 @@ pub fn run() {
             linear::linear_issue_details,
             linear::linear_issue_thread,
             linear::linear_issue_comment,
+            linear_boards::linear_boards_states,
+            linear_boards::linear_boards_issues,
+            linear_boards::linear_boards_move,
             jira::jira_status,
             jira::jira_set_config,
             jira::jira_list_projects,
