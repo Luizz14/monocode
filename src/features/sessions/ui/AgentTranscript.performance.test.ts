@@ -4,11 +4,16 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Block } from "../model/session";
 import * as activity from "../model/transcriptActivity";
+import * as artifactsModule from "../../artifacts/artifacts";
 import { AgentTranscript } from "./AgentTranscript";
 
 vi.mock("../model/transcriptActivity", async (original) => {
   const actual = await original<typeof activity>();
   return { ...actual, groupTurnItems: vi.fn(actual.groupTurnItems) };
+});
+vi.mock("../../artifacts/artifacts", async (original) => {
+  const actual = await original<typeof artifactsModule>();
+  return { ...actual, artifactCards: vi.fn(actual.artifactCards) };
 });
 vi.mock("./AgentMarkdown", () => ({
   AgentMarkdown: ({ text }: { text: string }) =>
@@ -137,4 +142,40 @@ it("leaves offscreen messages unmeasured until the browser reveals their turn", 
   expect(observer.target).toBeUndefined();
   act(() => text.closest(".transcript-turn")!.dispatchEvent(event));
   expect(height).not.toHaveBeenCalled();
+});
+
+it("re-renders only the turn a streaming update changed, with inline callbacks", async () => {
+  const blocks: Block[] = Array.from({ length: 20 }, (_, index): Block[] => [
+    { id: `u${index}`, role: "user", text: `Question ${index}` },
+    { id: `a${index}`, role: "assistant", text: `Answer ${index}` },
+  ]).flat();
+  // artifactCards runs once per TranscriptTurn render.
+  const turnRenders = vi.mocked(artifactsModule.artifactCards);
+  const render = (next: Block[]) =>
+    root.render(
+      createElement(AgentTranscript, {
+        blocks: next,
+        busy: true,
+        visible: true,
+        // New functions each render, as SessionPane passes them.
+        onOpenFile: () => {},
+        onSaveNote: () => {},
+        onShowWork: () => {},
+        onSecondOpinion: () => {},
+      }),
+    );
+  await act(async () => render(blocks));
+  expect(host.querySelectorAll("[data-transcript-turn]")).toHaveLength(20);
+  turnRenders.mockClear();
+
+  let updated = blocks.slice();
+  for (const text of ["Latest", "Latest output", "Latest output here"]) {
+    updated = updated.slice();
+    updated[updated.length - 1] = { ...updated[updated.length - 1], text };
+    act(() => render(updated));
+    expect(turnRenders).toHaveBeenCalledTimes(1);
+    expect(turnRenders.mock.calls[0][0].at(-1)?.text).toBe(text);
+    turnRenders.mockClear();
+  }
+  expect(host.textContent).toContain("Latest output here");
 });
