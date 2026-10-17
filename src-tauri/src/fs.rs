@@ -2136,15 +2136,78 @@ fn git_workspace_prefix(root: &Path) -> String {
 
 /// How long the remote-side part of a status read (the remote, its default
 /// branch, whether HEAD is pushed) is reused between polls. Git commands the
-/// app runs drop it at once; ones run elsewhere show within this.
+/// app runs drop it at once, and a change to the refs on disk (a push or
+/// fetch run elsewhere) is seen through `git_refs_stamp`; the time limit
+/// covers ref storage that stamp cannot see.
 const GIT_SYNC_TTL: Duration = Duration::from_secs(10);
 
 struct GitSyncCacheEntry {
     at: Instant,
+    stamp: u64,
     oid: Option<String>,
     branch: Option<String>,
     upstream: Option<String>,
     sync: GitSync,
+}
+
+/// The repository's common directory: `.git` at the root, or where a linked
+/// worktree's `.git` file points. A folder below the root asks git once.
+fn git_common_dir(root: &Path) -> Option<PathBuf> {
+    let dot = root.join(".git");
+    if dot.is_dir() {
+        return Some(dot);
+    }
+    if dot.is_file() {
+        let text = std::fs::read_to_string(&dot).ok()?;
+        let gitdir = root.join(text.strip_prefix("gitdir:")?.trim());
+        return Some(match std::fs::read_to_string(gitdir.join("commondir")) {
+            Ok(common) => gitdir.join(common.trim()),
+            Err(_) => gitdir,
+        });
+    }
+    static DIRS: OnceLock<Mutex<HashMap<PathBuf, PathBuf>>> = OnceLock::new();
+    let dirs = DIRS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(dir) = dirs.lock().ok()?.get(root) {
+        return Some(dir.clone());
+    }
+    let dir = root.join(git_stdout(root, &["rev-parse", "--git-common-dir"])?);
+    dirs.lock().ok()?.insert(root.to_path_buf(), dir.clone());
+    Some(dir)
+}
+
+/// Changes when the repository's refs do: with packed-refs, FETCH_HEAD, and
+/// every directory under refs/heads and refs/remotes, whose mtime moves
+/// when a loose ref inside it is written, replaced or removed.
+fn git_refs_stamp(root: &Path) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let Some(common) = git_common_dir(root) else {
+        return 0;
+    };
+    let mtime = |path: &Path| {
+        std::fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0)
+    };
+    let mut hasher = DefaultHasher::new();
+    mtime(&common.join("packed-refs")).hash(&mut hasher);
+    mtime(&common.join("FETCH_HEAD")).hash(&mut hasher);
+    let mut stack = vec![common.join("refs/heads"), common.join("refs/remotes")];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        mtime(&dir).hash(&mut hasher);
+        for entry in entries.flatten() {
+            if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+                stack.push(entry.path());
+            }
+        }
+    }
+    hasher.finish()
 }
 
 fn git_sync_cache() -> &'static Mutex<HashMap<PathBuf, GitSyncCacheEntry>> {
@@ -2160,9 +2223,11 @@ pub(crate) fn invalidate_git_sync(root: &Path) {
 
 fn git_sync_cached(root: &Path, status: &GitStatusRead) -> GitSync {
     let now = Instant::now();
+    let stamp = git_refs_stamp(root);
     if let Ok(cache) = git_sync_cache().lock() {
         if let Some(entry) = cache.get(root) {
             if now.duration_since(entry.at) < GIT_SYNC_TTL
+                && entry.stamp == stamp
                 && entry.oid == status.oid
                 && entry.branch == status.branch
                 && entry.upstream == status.upstream
@@ -2183,6 +2248,7 @@ fn git_sync_cached(root: &Path, status: &GitStatusRead) -> GitSync {
             root.to_path_buf(),
             GitSyncCacheEntry {
                 at: now,
+                stamp,
                 oid: status.oid.clone(),
                 branch: status.branch.clone(),
                 upstream: status.upstream.clone(),
@@ -8139,6 +8205,18 @@ mod tests {
         let synced = git_diff_index_for(&repo.0);
         assert_eq!((synced.ahead, synced.behind), (0, 0));
         assert!(synced.head_pushed);
+
+        // A push made outside the app (a terminal) changes the refs on disk,
+        // which the cache notices without waiting for its time limit.
+        std::fs::write(repo.0.join("a.txt"), "alpha\nbeta\ngamma\n").unwrap();
+        assert!(git(&repo.0, &["commit", "-q", "-am", "third"]));
+        let unpushed = git_diff_index_for(&repo.0);
+        assert_eq!((unpushed.ahead, unpushed.behind), (1, 0));
+        assert!(!unpushed.head_pushed);
+        assert!(git(&repo.0, &["push", "-q", "origin", "main"]));
+        let pushed_outside = git_diff_index_for(&repo.0);
+        assert_eq!((pushed_outside.ahead, pushed_outside.behind), (0, 0));
+        assert!(pushed_outside.head_pushed);
     }
 
     /// Times a status read of a real checkout against the diff-based reading
