@@ -4,6 +4,7 @@ mod account_identity;
 mod artifacts;
 mod automations;
 mod azure_devops;
+mod azure_pipelines;
 mod chat_background;
 mod checkpoint;
 mod codex_mono_store;
@@ -400,6 +401,15 @@ pub fn run() {
             gitlab::gitlab_work_item_thread,
             gitlab::gitlab_work_item_comment,
             gitlab::gitlab_mr_diff,
+            azure_pipelines::azure_pipelines_projects,
+            azure_pipelines::azure_pipelines_list,
+            azure_pipelines::azure_pipelines_runs,
+            azure_pipelines::azure_pipelines_run,
+            azure_pipelines::azure_pipelines_definition,
+            azure_pipelines::azure_pipelines_branches,
+            azure_pipelines::azure_pipelines_file,
+            azure_pipelines::azure_pipelines_run_titles,
+            azure_pipelines::azure_pipelines_queue,
             azure_devops::azure_devops_status,
             azure_devops::azure_devops_set_config,
             azure_devops::azure_devops_repo,

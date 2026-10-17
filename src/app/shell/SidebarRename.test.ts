@@ -2085,3 +2085,59 @@ it("labels preserved sessions as having no branch selected", () => {
   expect(card().textContent).not.toContain("No branch selected");
   expect(card().textContent).toContain("project/main");
 });
+
+describe("Pipelines rail action", () => {
+  it("appears after Automations only when Pipelines is available", async () => {
+    props.projectRailOpen = false;
+    props.onSelectProject = vi.fn();
+    props.onOpenProject = vi.fn();
+    props.onSearch = vi.fn();
+    props.onOpenInbox = vi.fn();
+    props.onOpenAutomations = vi.fn();
+    props.onOpenPipelines = vi.fn();
+    props.onGoBack = vi.fn();
+    await act(async () => render());
+
+    const rail = container.querySelector<HTMLElement>(
+      "[data-compact-project-rail]",
+    )!;
+    const labels = Array.from(rail.querySelectorAll("button"), (button) =>
+      button.getAttribute("aria-label")?.replace(/ \(.+\)$/, ""),
+    );
+    expect(labels.indexOf("Pipelines")).toBe(labels.indexOf("Automations") + 1);
+    act(() =>
+      rail.querySelector<HTMLButtonElement>('[aria-label="Pipelines"]')!.click(),
+    );
+    expect(props.onOpenPipelines).toHaveBeenCalledOnce();
+
+    // While Pipelines covers the workspace, its button steps back out.
+    props.pipelinesActive = true;
+    act(() => render());
+    act(() =>
+      rail.querySelector<HTMLButtonElement>('[aria-label="Pipelines"]')!.click(),
+    );
+    expect(props.onGoBack).toHaveBeenCalledOnce();
+
+    props.onOpenPipelines = undefined;
+    props.pipelinesActive = false;
+    act(() => render());
+    expect(container.querySelector('[aria-label="Pipelines"]')).toBeNull();
+  });
+
+  it("is listed in the full project rail", async () => {
+    props.projectRailOpen = true;
+    props.onSelectProject = vi.fn();
+    props.onOpenProject = vi.fn();
+    props.onOpenAutomations = vi.fn();
+    props.onOpenPipelines = vi.fn();
+    props.pipelinesActive = true;
+    await act(async () => render());
+    const button = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Pipelines"]',
+    )!;
+    expect(button).not.toBeNull();
+    expect(button.className).toContain("bg-selection");
+    act(() => button.click());
+    expect(props.onOpenPipelines).toHaveBeenCalledOnce();
+  });
+});

@@ -10,6 +10,7 @@ import {
   PinOff,
   File,
   Plus,
+  Rocket,
   Search,
   Settings,
   Zap,
@@ -102,6 +103,8 @@ type Props = {
   onGoForward?: () => void;
   onSearch?: () => void;
   searchActive?: boolean;
+  onOpenPipelines?: () => void;
+  pipelinesActive?: boolean;
   onOpenInbox?: () => void;
   inboxActive?: boolean;
   notesEnabled?: boolean;
@@ -141,6 +144,8 @@ export function ProjectRail({
   onGoForward,
   onSearch,
   searchActive = false,
+  onOpenPipelines,
+  pipelinesActive = false,
   onOpenInbox,
   inboxActive = false,
   notesEnabled = true,
@@ -331,6 +336,7 @@ export function ProjectRail({
   // Another view in the main area means no project row is the current one.
   const otherViewActive =
     searchActive ||
+    pipelinesActive ||
     inboxActive ||
     notesActive ||
     automationsActive ||
@@ -417,6 +423,15 @@ export function ProjectRail({
               active={automationsActive}
               ariaLabel="Automations"
             />
+            {onOpenPipelines ? (
+              <RailAction
+                label="Pipelines"
+                icon={Rocket}
+                onClick={onOpenPipelines}
+                active={pipelinesActive}
+                ariaLabel="Pipelines"
+              />
+            ) : null}
           </div>
 
           <div

@@ -17,7 +17,7 @@ const MAX_DIFF_FILE_BYTES: usize = 512 * 1024;
 /// Hunks render for the first N files; the rest stay listed without hunks.
 const MAX_DIFF_HUNK_FILES: usize = 40;
 const USER_AGENT: &str = "MonoCode";
-const API_VERSION: &str = "7.1";
+pub(crate) const API_VERSION: &str = "7.1";
 const CONNECTION_DATA_API_VERSION: &str = "7.1-preview.1";
 const WIT_COMMENTS_API_VERSION: &str = "7.1-preview.4";
 
@@ -30,8 +30,8 @@ pub struct AzureDevOpsStatus {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-struct AzureDevOpsConfig {
-    url: String,
+pub(crate) struct AzureDevOpsConfig {
+    pub(crate) url: String,
     token: String,
 }
 
@@ -1565,9 +1565,9 @@ fn validate_repo(repo: &str) -> Result<String, String> {
 
 // ---- HTTP ----
 
-struct AzureResponse {
-    value: Value,
-    truncated: bool,
+pub(crate) struct AzureResponse {
+    pub(crate) value: Value,
+    pub(crate) truncated: bool,
 }
 
 fn basic_auth(token: &str) -> String {
@@ -1575,7 +1575,7 @@ fn basic_auth(token: &str) -> String {
     format!("Basic {encoded}")
 }
 
-fn azure_get(config: &AzureDevOpsConfig, path: &str) -> Result<AzureResponse, String> {
+pub(crate) fn azure_get(config: &AzureDevOpsConfig, path: &str) -> Result<AzureResponse, String> {
     let url = format!("{}{}", config.url.trim_end_matches('/'), path);
     let agent = azure_agent();
     read_azure_response(
@@ -1588,7 +1588,7 @@ fn azure_get(config: &AzureDevOpsConfig, path: &str) -> Result<AzureResponse, St
     )
 }
 
-fn azure_post_json(
+pub(crate) fn azure_post_json(
     config: &AzureDevOpsConfig,
     path: &str,
     body: Value,
@@ -1721,7 +1721,7 @@ fn azure_http_error(status: u16, body: &str) -> String {
     message.unwrap_or_else(|| format!("Azure DevOps request failed ({status})"))
 }
 
-fn string_field(value: &Value, key: &str) -> Option<String> {
+pub(crate) fn string_field(value: &Value, key: &str) -> Option<String> {
     value
         .get(key)
         .and_then(Value::as_str)
@@ -1815,7 +1815,7 @@ fn canonical_org_key(url: &str) -> Option<String> {
     Some(normalized.to_ascii_lowercase())
 }
 
-fn encode_segment(value: &str) -> String {
+pub(crate) fn encode_segment(value: &str) -> String {
     let mut encoded = String::new();
     for byte in value.as_bytes() {
         if byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'_' | b'.' | b'~') {
@@ -2025,7 +2025,7 @@ fn read_config(app: &AppHandle) -> Result<Option<AzureDevOpsConfig>, String> {
     }
 }
 
-fn require_config(app: &AppHandle) -> Result<AzureDevOpsConfig, String> {
+pub(crate) fn require_config(app: &AppHandle) -> Result<AzureDevOpsConfig, String> {
     read_config(app)?.ok_or_else(|| "Connect Azure DevOps in Settings".to_string())
 }
 
