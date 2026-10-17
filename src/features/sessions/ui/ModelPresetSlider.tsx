@@ -19,8 +19,8 @@ import {
 import { performHaptic } from "../../../platform/tauri/haptics";
 import { RollText } from "../../../shared/ui/RollText";
 import { EffortTileShimmer } from "./EffortTileShimmer";
-import { EffortLevelIcon } from "./EffortLevelIcon";
-import type { EffortLevel } from "../model/effortLevels";
+import { ModelFamilyIcon } from "./ModelFamilyIcon";
+import type { ModelFamilyInfo } from "../model/modelFamilies";
 // The tile keyframes live with the effort menu that introduced them.
 import "./ModelPicker.css";
 import "./ModelPresetSlider.css";
@@ -32,8 +32,8 @@ type Props = {
   /** What the session runs now, shown while nothing is being dragged. */
   modelLabel: string;
   effortLabel?: string;
-  /** The current effort's rung, for its icon and color. */
-  level?: EffortLevel;
+  /** The current model's family, for its icon and color. */
+  family?: ModelFamilyInfo;
   tone?: EffortTone;
   /** Tick the trackpad as a drag crosses into another step. */
   haptics: boolean;
@@ -79,7 +79,7 @@ export function ModelPresetSlider({
   index,
   modelLabel,
   effortLabel,
-  level,
+  family,
   tone,
   haptics,
   keyboard = false,
@@ -114,7 +114,7 @@ export function ModelPresetSlider({
   const shown = dragIndex != null ? steps[dragIndex] : undefined;
   const shownModel = shown ? shown.modelLabel : modelLabel;
   const shownEffort = shown ? shown.effortLabel : effortLabel;
-  const shownLevel = shown ? shown.level : level;
+  const shownFamily = shown ? shown.family : family;
   const shownTone = shown ? shown.tone : tone;
   const activeIndex = dragIndex ?? index;
   const valueText = shownEffort ? `${shownModel} ${shownEffort}` : shownModel;
@@ -199,7 +199,8 @@ export function ModelPresetSlider({
   return (
     <div
       data-model-slider
-      data-effort-level={shownLevel}
+      data-model-family={shownFamily?.family}
+      data-model-legacy={shownFamily?.legacy ? "" : undefined}
       data-effort-tone={shownTone}
       className="model-slider flex w-fit flex-col items-center gap-4 p-3 font-sans"
     >
@@ -212,8 +213,8 @@ export function ModelPresetSlider({
         className="model-slider-label flex items-center gap-2 rounded-xl px-1 text-[22px] leading-[30px]"
       >
         <span className="grid size-6.5 shrink-0 place-items-center">
-          <EffortLevelIcon
-            level={shownLevel}
+          <ModelFamilyIcon
+            family={shownFamily?.family}
             size={26}
             className="model-slider-globe"
           />

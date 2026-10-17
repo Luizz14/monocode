@@ -6,7 +6,7 @@ import {
   type ModelSetting,
 } from "./models";
 import type { HarnessId } from "./session";
-import { effortLevel, type EffortLevel } from "./effortLevels";
+import { modelFamily, type ModelFamilyInfo } from "./modelFamilies";
 
 /** Effort levels that light the slider up, after the Max row in the effort menu. */
 export type EffortTone = "max" | "ultracode" | "ultrathink";
@@ -20,8 +20,8 @@ export type PresetStep = {
   effort?: string;
   modelLabel: string;
   effortLabel?: string;
-  /** Rung on the effort ladder, which picks the step's icon and color. */
-  level?: EffortLevel;
+  /** The model's family, which picks the step's icon and color. */
+  family?: ModelFamilyInfo;
   tone?: EffortTone;
 };
 
@@ -116,7 +116,7 @@ export function resolvePresetSteps(
       effort: option?.value,
       modelLabel: preset.label?.trim() || shortModelName(model),
       effortLabel: option?.label,
-      level: effortLevel(option?.value),
+      family: modelFamily(model),
       tone: effortTone(option?.value),
     });
   }

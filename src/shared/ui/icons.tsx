@@ -15,6 +15,7 @@ import ArrowLeft01Icon from "@hugeicons/core-free-icons/ArrowLeft01Icon";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import ArrowTurnForwardIcon from "@hugeicons/core-free-icons/ArrowTurnForwardIcon";
 import ArrowUp01Icon from "@hugeicons/core-free-icons/ArrowUp01Icon";
+import BookOpen02Icon from "@hugeicons/core-free-icons/BookOpen02Icon";
 import BotIcon from "@hugeicons/core-free-icons/BotIcon";
 import GhostIcon from "@hugeicons/core-free-icons/GhostIcon";
 import AiIdeaIcon from "@hugeicons/core-free-icons/AiIdeaIcon";
@@ -61,6 +62,8 @@ import InternetIcon from "@hugeicons/core-free-icons/InternetIcon";
 import HelpCircleIcon from "@hugeicons/core-free-icons/HelpCircleIcon";
 import ImageAdd01Icon from "@hugeicons/core-free-icons/ImageAdd01Icon";
 import InboxIcon from "@hugeicons/core-free-icons/InboxIcon";
+import MountainIcon from "@hugeicons/core-free-icons/MountainIcon";
+import MusicNote03Icon from "@hugeicons/core-free-icons/MusicNote03Icon";
 import NotificationOff01Icon from "@hugeicons/core-free-icons/NotificationOff01Icon";
 import KeyboardIcon from "@hugeicons/core-free-icons/KeyboardIcon";
 import LayoutAlignLeftIcon from "@hugeicons/core-free-icons/LayoutAlignLeftIcon";
@@ -88,6 +91,7 @@ import Refresh01Icon from "@hugeicons/core-free-icons/Refresh01Icon";
 import RegexIcon from "@hugeicons/core-free-icons/RegexIcon";
 import ReplaceIcon from "@hugeicons/core-free-icons/ReplaceIcon";
 import RotateCcwIcon from "@hugeicons/core-free-icons/RotateCcwIcon";
+import SakuraIcon from "@hugeicons/core-free-icons/SakuraIcon";
 import SmilePlusIcon from "@hugeicons/core-free-icons/SmilePlusIcon";
 import Search01Icon from "@hugeicons/core-free-icons/Search01Icon";
 import Settings01Icon from "@hugeicons/core-free-icons/Settings01Icon";
@@ -106,12 +110,6 @@ import UngroupItemsIcon from "@hugeicons/core-free-icons/UngroupItemsIcon";
 import ViewIcon from "@hugeicons/core-free-icons/ViewIcon";
 import WholeWordIcon from "@hugeicons/core-free-icons/WholeWordIcon";
 import Wrench01Icon from "@hugeicons/core-free-icons/Wrench01Icon";
-import Comet01Icon from "@hugeicons/core-free-icons/Comet01Icon";
-import GalaxyIcon from "@hugeicons/core-free-icons/GalaxyIcon";
-import Moon01Icon from "@hugeicons/core-free-icons/Moon01Icon";
-import SaturnIcon from "@hugeicons/core-free-icons/SaturnIcon";
-import StarsIcon from "@hugeicons/core-free-icons/StarsIcon";
-import Sun03Icon from "@hugeicons/core-free-icons/Sun03Icon";
 import { forwardRef, type Ref } from "react";
 
 /** Props shared by every chrome icon. `icon` is filled in by the named wrappers. */
@@ -170,6 +168,7 @@ export const Archive = wrap(Archive02Icon, "Archive");
 export const ArrowDownCircle = wrap(CircleArrowDown01Icon, "ArrowDownCircle");
 export const ArrowLeft = wrap(ArrowLeft01Icon, "ArrowLeft");
 export const ArrowUp = wrap(ArrowUp01Icon, "ArrowUp");
+export const BookOpen = wrap(BookOpen02Icon, "BookOpen");
 export const Bot = wrap(BotIcon, "Bot");
 export const Ghost = wrap(GhostIcon, "Ghost");
 export const AiIdea = wrap(AiIdeaIcon, "AiIdea");
@@ -245,6 +244,8 @@ export const MessageSquare = wrap(Comment01Icon, "MessageSquare");
 export const MessageSquarePlus = wrap(CommentAdd01Icon, "MessageSquarePlus");
 export const Minus = wrap(MinusSignIcon, "Minus");
 export const MoreHorizontal = wrap(MoreHorizontalIcon, "MoreHorizontal");
+export const Mountain = wrap(MountainIcon, "Mountain");
+export const MusicNotes = wrap(MusicNote03Icon, "MusicNotes");
 export const Palette = wrap(PaintBoardIcon, "Palette");
 export const Pause = wrap(PauseIcon, "Pause");
 export const PanelBottom = wrap(LayoutBottomIcon, "PanelBottom");
@@ -264,6 +265,7 @@ export const RefreshCw = wrap(Refresh01Icon, "RefreshCw");
 export const Regex = wrap(RegexIcon, "Regex");
 export const Replace = wrap(ReplaceIcon, "Replace");
 export const RotateCcw = wrap(RotateCcwIcon, "RotateCcw");
+export const Sakura = wrap(SakuraIcon, "Sakura");
 export const Search = wrap(Search01Icon, "Search");
 export const Settings = wrap(Settings01Icon, "Settings");
 export const Share = wrap(Share02Icon, "Share");
@@ -288,19 +290,3 @@ export const WholeWord = wrap(WholeWordIcon, "WholeWord");
 export const Wrench = wrap(Wrench01Icon, "Wrench");
 export const X = wrap(Cancel01Icon, "X");
 export const Zap = wrap(FlashIcon, "Zap");
-
-/** A glyph's raw elements, for an icon that paints its own strokes. */
-export type IconGlyph = IconSvgElement;
-
-/**
- * Sky glyphs for the effort ladder (see `EffortLevelIcon`), as raw data so a
- * level can stroke them with a gradient.
- */
-export const SKY_GLYPHS = {
-  moon: Moon01Icon,
-  saturn: SaturnIcon,
-  sun: Sun03Icon,
-  stars: StarsIcon,
-  comet: Comet01Icon,
-  galaxy: GalaxyIcon,
-} satisfies Record<string, IconGlyph>;

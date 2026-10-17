@@ -68,55 +68,70 @@ test("steps from the keyboard, switching the model when a preset needs it", asyn
   await expect(track).toHaveCount(0);
 });
 
-test("gives each effort level its icon and color, and lights the top three", async ({
+test("gives each model family its icon and color, and lights the top three", async ({
   page,
 }) => {
   await page.goto("/tests/browser/model-slider.html?view=states");
   const panels = page.locator("[data-model-slider]");
-  await expect(panels).toHaveCount(7);
+  await expect(panels).toHaveCount(9);
   const looks = await panels.evaluateAll((all) =>
     all.map((panel) => ({
-      level: panel.getAttribute("data-effort-level"),
+      family: panel.getAttribute("data-model-family"),
+      legacy: panel.hasAttribute("data-model-legacy"),
       tone: panel.getAttribute("data-effort-tone"),
       icon: panel
-        .querySelector("svg[data-effort-icon]")
-        ?.getAttribute("data-effort-icon"),
+        .querySelector("svg[data-model-icon]")
+        ?.getAttribute("data-model-icon"),
       color: getComputedStyle(panel.querySelector(".model-slider-globe")!)
         .color,
-      text: panel.querySelector(".model-slider-effort")?.textContent,
+      model: panel.querySelector(".model-slider-model")?.textContent,
     })),
   );
-  expect(looks.map((look) => look.level)).toEqual([
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "max",
-    "ultracode",
-    "ultrathink",
+  expect(
+    looks.map((look) => `${look.family}${look.legacy ? " old" : ""}`),
+  ).toEqual([
+    "haiku old",
+    "sonnet",
+    "sonnet old",
+    "opus",
+    "opus old",
+    "fable",
+    "opus",
+    "opus",
+    "opus",
   ]);
   expect(looks.map((look) => look.icon)).toEqual(
-    looks.map((look) => look.level),
+    looks.map((look) => look.family),
   );
+  // The model's name stays in words beside its icon.
+  expect(looks.map((look) => look.model)).toEqual([
+    "Haiku 4.5",
+    "Sonnet 5",
+    "Sonnet 4.6",
+    "Opus 5.5",
+    "Opus 4.8",
+    "Fable 5",
+    "Opus 5.5",
+    "Opus 5.5",
+    "Opus 5.5",
+  ]);
+  // Four families, each older generation a shade of its own, and the
+  // effects keep the model's color on the icon.
+  const color = (index: number) => looks[index].color;
+  expect(new Set([0, 1, 3, 5].map(color)).size).toBe(4);
+  expect(color(2)).not.toBe(color(1));
+  expect(color(4)).not.toBe(color(3));
+  expect([6, 7, 8].map(color)).toEqual([color(3), color(3), color(3)]);
   expect(looks.map((look) => look.tone)).toEqual([
     null,
     null,
     null,
     null,
+    null,
+    null,
     "max",
     "ultracode",
     "ultrathink",
-  ]);
-  // Every level has its own color, and its name stays in words.
-  expect(new Set(looks.map((look) => look.color)).size).toBe(7);
-  expect(looks.map((look) => look.text)).toEqual([
-    "Low",
-    "Medium",
-    "High",
-    "Extra High",
-    "Max",
-    "Ultracode",
-    "Ultrathink",
   ]);
   await expect(page.locator(".model-slider-tiles")).toHaveCount(3);
 });

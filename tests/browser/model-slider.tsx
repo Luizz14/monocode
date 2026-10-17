@@ -15,7 +15,6 @@ import {
   setHarnessModels,
 } from "../../src/features/sessions/model/models";
 import { resolvePresetSteps } from "../../src/features/sessions/model/modelPresetSteps";
-import { EFFORT_LEVELS } from "../../src/features/sessions/model/effortLevels";
 import type {
   HarnessId,
   RuntimeMode,
@@ -44,7 +43,7 @@ function NewSession() {
     settings: Record<string, string>;
   }>({
     harness: "claude",
-    model: "claude:opus-5-5",
+    model: params.get("model") ?? "claude:opus-5-5",
     settings: { effort: params.get("effort") ?? "high" },
   });
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>("supervised");
@@ -109,14 +108,25 @@ function NewSession() {
   );
 }
 
+/** Each family, older generations beside current ones, and the three effects. */
+const STATE_PRESETS = [
+  ["claude:haiku-4.5", ""],
+  ["claude:sonnet-5", "medium"],
+  ["claude:sonnet-4.6", "high"],
+  ["claude:opus-5-5", "high"],
+  ["claude:opus-4.8", "high"],
+  ["claude:fable-5", "high"],
+  ["claude:opus-5-5", "max"],
+  ["claude:opus-5-5", "ultracode"],
+  ["claude:opus-5-5", "ultrathink"],
+] as const;
+
 function States() {
-  // One panel per rung of the effort ladder, on a rail of Opus 5.5's levels.
-  const opus = resolveModel("claude", "claude:opus-5-5");
   const steps = resolvePresetSteps(
-    EFFORT_LEVELS.map((effort) => ({
-      id: effort,
+    STATE_PRESETS.map(([model, effort]) => ({
+      id: `${model}-${effort}`,
       harness: "claude" as const,
-      model: opus.id,
+      model,
       effort,
     })),
     source,
@@ -124,13 +134,13 @@ function States() {
   return (
     <div className="grid grid-cols-2 items-start gap-4 p-4">
       {steps.map((step, index) => (
-        <div key={step.preset.id} data-state={step.effort}>
+        <div key={step.preset.id} data-state={step.preset.id}>
           <ModelPresetSlider
             steps={steps}
             index={index}
             modelLabel={step.modelLabel}
             effortLabel={step.effortLabel}
-            level={step.level}
+            family={step.family}
             tone={step.tone}
             haptics={false}
             onCommit={() => {}}

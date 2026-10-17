@@ -310,31 +310,54 @@ describe("ModelPresetSlider", () => {
     });
   });
 
-  it("draws each level's icon and color, and the step being dragged over", () => {
-    const { track } = render({ level: "high" });
+  it("draws the model family's icon and the one being dragged over", () => {
+    const sonnet: AgentModel = {
+      ...opus,
+      id: "claude:sonnet-4.6",
+      name: "Claude Sonnet 4.6",
+    };
+    const mixed = resolvePresetSteps(
+      [
+        { id: "s", harness: "claude", model: sonnet.id, effort: "low" },
+        { id: "o", harness: "claude", model: opus.id, effort: "high" },
+      ],
+      {
+        find: (id) => [opus, sonnet].find((model) => model.id === id),
+        resolve: () => opus,
+        modelsFor: () => [opus, sonnet],
+        available: () => true,
+      },
+    );
+    const { track } = render({
+      steps: mixed,
+      index: 1,
+      family: mixed[1].family,
+    });
     const icon = () =>
-      panel().querySelector<SVGElement>("svg[data-effort-icon]")!.dataset
-        .effortIcon;
-    expect(panel().dataset.effortLevel).toBe("high");
-    expect(icon()).toBe("high");
-    // The level stays in words beside the icon.
-    expect(panel().textContent).toContain("High");
+      panel().querySelector<SVGElement>("svg[data-model-icon]")!.dataset
+        .modelIcon;
+    expect(panel().dataset.modelFamily).toBe("opus");
+    expect(panel().hasAttribute("data-model-legacy")).toBe(false);
+    expect(icon()).toBe("opus");
+    // The model stays in words beside the icon.
+    expect(panel().textContent).toContain("Opus 5.5");
 
-    pointer(track, "pointerdown", stepCenter(2, 6));
-    pointer(track, "pointermove", stepCenter(0, 6));
-    expect(panel().dataset.effortLevel).toBe("low");
-    expect(icon()).toBe("low");
-    expect(panel().textContent).toContain("Low");
-    pointer(track, "pointercancel", stepCenter(0, 6));
-    expect(icon()).toBe("high");
+    pointer(track, "pointerdown", stepCenter(1, 2));
+    pointer(track, "pointermove", stepCenter(0, 2));
+    expect(panel().dataset.modelFamily).toBe("sonnet");
+    expect(panel().hasAttribute("data-model-legacy")).toBe(true);
+    expect(icon()).toBe("sonnet");
+    expect(panel().textContent).toContain("Sonnet 4.6");
+    pointer(track, "pointercancel", stepCenter(0, 2));
+    expect(icon()).toBe("opus");
   });
 
-  it("keeps a neutral globe outside the ladder", () => {
-    render({ index: -1, effortLabel: "Minimal" });
-    expect(panel().hasAttribute("data-effort-level")).toBe(false);
+  it("keeps a neutral globe for a model outside the families", () => {
+    render({ index: -1, modelLabel: "GPT-5.5", effortLabel: "Minimal" });
+    expect(panel().hasAttribute("data-model-family")).toBe(false);
     expect(
-      panel().querySelector<SVGElement>("svg[data-effort-icon]")!.dataset
-        .effortIcon,
+      panel().querySelector<SVGElement>("svg[data-model-icon]")!.dataset
+        .modelIcon,
     ).toBe("none");
   });
 
