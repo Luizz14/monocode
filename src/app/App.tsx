@@ -12121,6 +12121,7 @@ function Workspace({
     onOpenInbox,
     onOpenNotes,
     onOpenBoards,
+    onOpenPipelines,
     pickProject,
     onNewTerminal,
     onNewTerminalTab,
@@ -12154,6 +12155,7 @@ function Workspace({
     onOpenInbox,
     onOpenNotes,
     onOpenBoards,
+    onOpenPipelines,
     pickProject,
     onNewTerminal,
     onNewTerminalTab,
@@ -12452,6 +12454,7 @@ function Workspace({
       listen("open_inbox", () => actions.current.onOpenInbox()),
       listen("open_notes", () => actions.current.onOpenNotes()),
       listen("open_boards", () => actions.current.onOpenBoards()),
+      listen("open_pipelines", () => actions.current.onOpenPipelines()),
       listen("open_settings", () => actions.current.openSettings()),
       listen("check_for_updates", () => {
         void runUpdateFlow(true);
@@ -13188,6 +13191,11 @@ function Workspace({
                     onOpenInbox={onOpenInbox}
                     onOpenNotes={notesEnabled ? onOpenNotes : undefined}
                     onOpenBoards={onOpenBoards}
+                    onOpenPipelines={
+                      pipelinesAvailable || pipelinesViewOpen
+                        ? onOpenPipelines
+                        : undefined
+                    }
                     onZoomIn={() => {
                       const next = saveUiScale(zoomInUiScale(loadUiScale()));
                       void applyUiScale(next);
