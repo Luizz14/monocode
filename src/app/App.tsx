@@ -11761,6 +11761,7 @@ function Workspace({
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardsViewOpen(false);
       setPipelinesViewOpen(true);
     });
   }, []);
@@ -11792,6 +11793,7 @@ function Workspace({
     startTransition(() => {
       setFilePickerOpen(false);
       setSettingsOpen(false);
+      setPipelinesViewOpen(false);
       setSearchViewOpen(false);
       setInboxViewOpen(false);
       setNotesViewOpen(false);
