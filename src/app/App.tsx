@@ -232,6 +232,7 @@ import {
   type WorkspaceTab,
 } from "../features/workspace/model/layout";
 import {
+  loadChangelog,
   releaseNotesForVersion,
   releaseNotesTitle,
 } from "./model/releaseNotes";
@@ -2711,15 +2712,19 @@ function Workspace({
   );
 
   const onOpenWhatsNew = useCallback((version: string) => {
-    const document = releaseNotesForVersion(version);
-    if (!document) {
-      void message(
-        "Release notes for this version are not available in this build.",
-        { title: "MonoCode" },
-      );
-      return;
-    }
-    setWhatsNewVersion(document.source.version);
+    void loadChangelog()
+      .catch(() => "")
+      .then((changelog) => {
+        const document = releaseNotesForVersion(version, changelog);
+        if (!document) {
+          void message(
+            "Release notes for this version are not available in this build.",
+            { title: "MonoCode" },
+          );
+          return;
+        }
+        setWhatsNewVersion(document.source.version);
+      });
   }, []);
 
   const createWorkspaceTab = useCallback(

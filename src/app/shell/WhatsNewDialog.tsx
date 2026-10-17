@@ -3,6 +3,7 @@ import {
   presentReleaseNotes,
   releaseNotesTitle,
 } from "../model/releaseNotes";
+import { useChangelog } from "../hooks/useChangelog";
 import { AgentMarkdown } from "../../features/sessions/ui/AgentMarkdown";
 import { Modal } from "../../shared/ui/Modal";
 
@@ -12,12 +13,13 @@ type Props = {
 };
 
 export function WhatsNewBody({ version }: { version: string }) {
-  const notes = presentReleaseNotes(version);
+  const changelog = useChangelog();
+  const notes = changelog ? presentReleaseNotes(version, changelog) : null;
   const title = releaseNotesTitle(version);
 
   return (
     <article aria-label={title} className="px-5 py-4">
-      {notes?.markdown ? (
+      {!changelog ? null : notes?.markdown ? (
         <AgentMarkdown
           className="whats-new-md"
           text={notes.markdown}
@@ -33,7 +35,8 @@ export function WhatsNewBody({ version }: { version: string }) {
 }
 
 export function WhatsNewDialog({ version, onClose }: Props) {
-  const notes = presentReleaseNotes(version);
+  const changelog = useChangelog();
+  const notes = changelog ? presentReleaseNotes(version, changelog) : null;
   const date = notes?.date ? formatReleaseDate(notes.date) : null;
 
   return (

@@ -1,4 +1,31 @@
-import bundledChangelog from "../../../CHANGELOG.md?raw";
+/**
+ * The changelog is read on demand: bundled with the window it was 166 KB of
+ * the boot JS for a dialog that opens once per update.
+ */
+let changelog: string | null = null;
+let loading: Promise<string> | null = null;
+const listeners = new Set<() => void>();
+
+export function loadChangelog(): Promise<string> {
+  loading ??= import("../../../CHANGELOG.md?raw").then((mod) => {
+    changelog = mod.default;
+    for (const listener of listeners) listener();
+    return mod.default;
+  });
+  return loading;
+}
+
+/** The changelog once loaded; subscribing starts the load. */
+export const changelogStore = {
+  subscribe(listener: () => void): () => void {
+    listeners.add(listener);
+    void loadChangelog().catch(() => undefined);
+    return () => {
+      listeners.delete(listener);
+    };
+  },
+  get: () => changelog,
+};
 
 export type ReleaseNotesTabSource = {
   version: string;
@@ -15,7 +42,7 @@ export function releaseNotesTitle(version: string): string {
 
 export function releaseNotesForVersion(
   version: string,
-  changelog: string = bundledChangelog,
+  changelog: string,
 ): ReleaseNotesDocument | null {
   const normalized = version.trim();
   if (!normalized || normalized === "Unreleased") return null;
@@ -41,7 +68,7 @@ export function releaseNotesForVersion(
 
 export function releaseNotesMarkdown(
   source: ReleaseNotesTabSource,
-  changelog: string = bundledChangelog,
+  changelog: string,
 ): string | null {
   return releaseNotesForVersion(source.version, changelog)?.markdown ?? null;
 }
@@ -55,7 +82,7 @@ export type ReleaseNotesPresentation = {
 /** Changelog body for the What's new modal: version heading lives in the chrome. */
 export function presentReleaseNotes(
   version: string,
-  changelog: string = bundledChangelog,
+  changelog: string,
 ): ReleaseNotesPresentation | null {
   const release = releaseNotesForVersion(version, changelog);
   if (!release) return null;

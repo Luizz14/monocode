@@ -3,6 +3,7 @@ import {
   releaseNotesMarkdown,
   type ReleaseNotesTabSource,
 } from "../model/releaseNotes";
+import { useChangelog } from "../hooks/useChangelog";
 import { AgentMarkdown } from "../../features/sessions/ui/AgentMarkdown";
 
 export function ReleaseNotesSurface({
@@ -11,7 +12,8 @@ export function ReleaseNotesSurface({
   source: ReleaseNotesTabSource;
 }) {
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
-  const markdown = releaseNotesMarkdown(source);
+  const changelog = useChangelog();
+  const markdown = changelog ? releaseNotesMarkdown(source, changelog) : null;
 
   return (
     <div
@@ -22,7 +24,7 @@ export function ReleaseNotesSurface({
         aria-label="Release notes"
         className="mx-auto w-full max-w-3xl px-8 py-10"
       >
-        {markdown ? (
+        {!changelog ? null : markdown ? (
           <AgentMarkdown text={markdown} streaming={false} />
         ) : (
           <p className="text-[13px] text-content/60">
