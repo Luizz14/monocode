@@ -207,6 +207,12 @@ type Props = {
   /** Bump to force a refocus even when `focused` was already true (e.g. window regains OS focus). */
   focusToken?: number;
   shell?: boolean;
+  /**
+   * The box's line: `dashed` for the centered new-session composer, as in
+   * the design, `solid` once it docks under a conversation. Defaults by
+   * `shell`.
+   */
+  boxBorder?: "dashed" | "solid";
   compact?: boolean;
   placeholder?: string;
   inputAriaLabel?: string;
@@ -333,6 +339,7 @@ export function Composer({
   focusToken,
   hotkeys = false,
   shell = false,
+  boxBorder = shell ? "dashed" : "solid",
   compact = false,
   placeholder,
   inputAriaLabel,
@@ -1705,12 +1712,9 @@ export function Composer({
     );
   };
 
-  // The centered new-session composer follows the newer design; once it
-  // docks under a transcript it keeps the compact look.
-  const hero = !!shell;
   // As a block the field drops the inline baseline gap under it, so the box
   // is exactly its rows tall.
-  const fieldPadding = hero ? "block px-4 py-3" : "px-3 py-3";
+  const fieldPadding = "block px-4 py-3";
 
   const attachFromPicker = () => {
     if (!attachmentsSupported) return;
@@ -1743,15 +1747,19 @@ export function Composer({
           onDismiss={onUsageLimitDismiss}
         />
       ) : null}
-      <MessageQueue
-        messages={queuedMessages}
-        status={queueStatus}
-        onDelete={onDeleteQueuedMessage}
-        onEdit={onEditQueuedMessage}
-        onEditingChange={onQueuedMessageEditingChange}
-        onSteer={onSteerQueuedMessage}
-        onResume={onResumeQueue}
-      />
+      {/* The queue sits on the box like a tab: inset past the box's 24px
+          corners, and down onto its line, which is drawn 3px inside the edge. */}
+      <div className="relative z-20 -mb-[3px] px-4">
+        <MessageQueue
+          messages={queuedMessages}
+          status={queueStatus}
+          onDelete={onDeleteQueuedMessage}
+          onEdit={onEditQueuedMessage}
+          onEditingChange={onQueuedMessageEditingChange}
+          onSteer={onSteerQueuedMessage}
+          onResume={onResumeQueue}
+        />
+      </div>
       <div className="relative overflow-visible">
         {mcpPickerOpen ? (
           <div className="absolute inset-x-0 bottom-full z-30 mb-1">
@@ -1917,57 +1925,40 @@ export function Composer({
           ref={boxRef}
           data-composer-box
           data-composer-editing={resendEdited ? "" : undefined}
-          className={
-            hero
-              ? // The new-session composer: a rounder box drawn by a dashed
-                // outline inset from its edge.
-                `relative z-10 rounded-3xl bg-content/3 outline-[1.5px] -outline-offset-3 outline-dashed backdrop-blur-sm ${
-                  fileDrag
-                    ? "outline-accent/60"
-                    : "outline-content/10 has-focus:outline-content/20"
-                }`
-              : `relative z-10 border bg-content/3 backdrop-blur-sm ${
-                  resendEdited
-                    ? "edit-last-turn-composer rounded-lg"
-                    : "rounded-lg border-content/10 has-focus:border-content/20"
-                } ${
-                  fileDrag
-                    ? "border-accent/60"
-                    : resendEdited
-                      ? ""
-                      : "border-content/10 has-focus:border-content/20"
-                }`
-          }
+          data-composer-border={boxBorder}
+          // A glass box drawn by an outline inset from its edge: dashed while
+          // it waits centered in a new session, solid once docked.
+          className={`relative z-10 rounded-3xl bg-content/3 outline-[1.5px] -outline-offset-3 backdrop-blur-sm ${
+            boxBorder === "dashed" ? "outline-dashed" : "outline-solid"
+          } ${
+            fileDrag
+              ? "outline-accent/60"
+              : resendEdited
+                ? "edit-last-turn-composer"
+                : "outline-content/10 has-focus:outline-content/20"
+          }`}
         >
           {fileDrag ? (
-            <div
-              className={`pointer-events-none absolute inset-0 z-20 grid place-items-center bg-accent/8 text-[12px] text-content/70 ${
-                hero ? "rounded-3xl" : "rounded-lg"
-              }`}
-            >
+            <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-3xl bg-accent/8 text-[12px] text-content/70">
               Drop files to attach
             </div>
           ) : null}
           {hideTopBar ? null : (
-            <div
-              className={`flex min-w-0 items-center gap-2.5 overflow-hidden pt-2.5 ${
-                hero ? "px-4" : "px-3"
-              }`}
-            >
+            <div className="flex min-w-0 items-center gap-2.5 overflow-hidden px-4 pt-2.5">
               {!remote && !hideProjectPicker ? (
                 <CwdPicker
                   cwd={cwd}
                   recents={recents}
                   projectLogoPath={projectLogoPath}
                   enabled={enabled}
-                  chevron={hero}
+                  chevron
                   onCwdChange={onCwdChange}
                   onNewTerminal={worktreeRemoved ? undefined : onNewTerminal}
                   onClose={() => ref.current?.focus()}
                 >
-                  {hero && cwd && looksLikeProject(cwd) ? (
-                    // The new-session composer names the project, as its
-                    // heading does, instead of spelling out the path.
+                  {cwd && looksLikeProject(cwd) ? (
+                    // A project goes by its name, as the new-session heading
+                    // calls it, instead of its path.
                     <>
                       <ProjectLogoIcon
                         path={projectLogoPath}
@@ -2154,9 +2145,7 @@ export function Composer({
             />
           </div>
 
-          <div
-            className={`flex items-center gap-1 ${hero ? "px-4 pb-3" : "px-2 pb-2"}`}
-          >
+          <div className="flex items-center gap-1 px-4 pb-3">
             <div
               ref={plusRef}
               className={compact ? "hidden" : "relative shrink-0"}
@@ -2392,7 +2381,7 @@ export function Composer({
                   project={cwd}
                   hideSettings={controlsBeside}
                   hotkeys={hotkeys && enabled}
-                  variant={hero ? "ghost" : "pill"}
+                  variant="ghost"
                   presetSlider
                   onChange={onModelChange}
                   onSettingsChange={(settings) =>
@@ -2415,7 +2404,7 @@ export function Composer({
                   <AccessPicker
                     value={runtimeMode}
                     busy={busy}
-                    variant={hero ? "ghost" : "pill"}
+                    variant="ghost"
                     onChange={onRuntimeModeChange}
                     onClose={() => ref.current?.focus()}
                   />
@@ -2443,7 +2432,7 @@ export function Composer({
                 hasValue={hasValue && !worktreeRemoved}
                 allowBusySubmit={allowBusySubmit}
                 label={draftActive ? "Save draft" : "Send"}
-                rounded={hero ? "rounded-lg" : "rounded-md"}
+                rounded="rounded-lg"
                 onSend={() => submit(ref.current?.value ?? "")}
                 onStop={() => onStop?.()}
               />

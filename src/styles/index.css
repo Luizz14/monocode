@@ -1370,9 +1370,10 @@ html.theme-light .orchestrator-constellation {
   }
 }
 
+/* Editing the last turn dashes the composer's line in the accent color. */
 .edit-last-turn-composer {
-  border-style: dashed;
-  border-color: color-mix(
+  outline-style: dashed;
+  outline-color: color-mix(
     in srgb,
     var(--user-accent-color, var(--color-accent)) 32%,
     transparent

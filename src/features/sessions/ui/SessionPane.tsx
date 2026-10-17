@@ -656,6 +656,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
       focusToken={composerFocusToken}
       hotkeys={focused && !btw.open}
       shell={!dockComposer}
+      boxBorder={dockComposer ? "solid" : "dashed"}
       harness={session.harness}
       model={session.model}
       modelSettings={session.modelSettings}

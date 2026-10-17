@@ -36,7 +36,8 @@ const source: ModelSource = {
 const params = new URLSearchParams(location.search);
 const CWD = "/Users/me/Projects/monocode";
 
-function NewSession() {
+/** `?view=active` docks the composer under a short conversation instead. */
+function NewSession({ active = false }: { active?: boolean }) {
   const [choice, setChoice] = useState<{
     harness: HarnessId;
     model: string;
@@ -66,13 +67,18 @@ function NewSession() {
           }}
         />
       ) : null}
-      <EmptySession
-        cwd={CWD}
-        hasChatBackground={Boolean(background)}
-        composer={
+      {(() => {
+        const composer = (
           <Composer
             focused={false}
-            shell
+            shell={!active}
+            boxBorder={active ? "solid" : "dashed"}
+            busy={active}
+            queuedMessages={
+              active
+                ? [{ id: "q1", text: "Then update the docs", attachments: [] }]
+                : undefined
+            }
             harness={choice.harness}
             model={choice.model}
             modelSettings={choice.settings}
@@ -98,9 +104,41 @@ function NewSession() {
             }
             onRuntimeModeChange={setRuntimeMode}
             onSubmit={() => true}
+            onStop={() => {}}
           />
+        );
+        if (!active) {
+          return (
+            <EmptySession
+              cwd={CWD}
+              hasChatBackground={Boolean(background)}
+              composer={composer}
+            />
+          );
         }
-      />
+        // The docked layout from SessionPane: the conversation above, the
+        // composer in the same centered column below it.
+        return (
+          <div className="relative flex h-full min-h-0 flex-col">
+            <div className="mx-auto flex w-full max-w-4xl min-h-0 flex-1 flex-col justify-end gap-4 overflow-hidden px-4 pb-4 text-[14px] leading-[22px] text-content">
+              <div className="ml-auto max-w-[70%] rounded-2xl bg-content/8 px-4 py-2.5">
+                Make the composer in active sessions match the new-session one.
+              </div>
+              <p className="max-w-[90%] text-content/85">
+                The docked composer now uses the same box, chips, and insets as
+                the new-session composer. Only its line differs: solid here,
+                dashed while it waits in an empty session.
+              </p>
+            </div>
+            <div
+              data-session-composer
+              className="mx-auto w-full max-w-4xl shrink-0"
+            >
+              {composer}
+            </div>
+          </div>
+        );
+      })()}
       <output data-choice className="sr-only">
         {`${choice.model} ${choice.settings.effort ?? ""}`}
       </output>
@@ -160,7 +198,11 @@ if (params.get("theme") === "light") {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ModelSourceContext.Provider value={source}>
-      {params.get("view") === "states" ? <States /> : <NewSession />}
+      {params.get("view") === "states" ? (
+        <States />
+      ) : (
+        <NewSession active={params.get("view") === "active"} />
+      )}
     </ModelSourceContext.Provider>
   </StrictMode>,
 );
