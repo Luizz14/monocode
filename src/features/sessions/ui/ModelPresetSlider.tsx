@@ -10,6 +10,7 @@ import {
 import {
   dragStepAt,
   SLIDER_KNOB_SIZE,
+  SLIDER_TRACK_WIDTH,
   stepAt,
   stepCenter,
   stepForKey,
@@ -21,6 +22,12 @@ import { RollText } from "../../../shared/ui/RollText";
 import { EffortTileShimmer } from "./EffortTileShimmer";
 import { ModelFamilyIcon } from "./ModelFamilyIcon";
 import type { ModelFamilyInfo } from "../model/modelFamilies";
+import {
+  followStep,
+  isSettled,
+  springStep,
+  type SliderMotion,
+} from "../model/sliderMotion";
 // The tile keyframes live with the effort menu that introduced them.
 import "./ModelPicker.css";
 import "./ModelPresetSlider.css";
@@ -67,6 +74,24 @@ export function warmSliderFonts() {
 
 const KNOB_HALF = SLIDER_KNOB_SIZE / 2;
 
+/** A frame longer than this (a background tab) is integrated as this. */
+const MAX_FRAME_SECONDS = 1 / 30;
+
+type Motion = SliderMotion & {
+  /** Where the knob is headed: the pointer while dragging, else a dot. */
+  target: number;
+  mode: "follow" | "settle";
+  frame: number;
+  last: number;
+};
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
+  );
+}
+
 /**
  * The composer's model chooser: the chosen model and effort over a rail with
  * one dot per preset. Drag the knob or click a dot to switch; arrow keys,
@@ -88,19 +113,98 @@ export function ModelPresetSlider({
   onDone,
 }: Props) {
   const track = useRef<HTMLDivElement>(null);
+  const knob = useRef<HTMLSpanElement>(null);
+  const fill = useRef<HTMLSpanElement>(null);
   const drag = useRef<Drag | null>(null);
+  const motion = useRef<Motion>({
+    pos: Number.NaN,
+    vel: 0,
+    target: 0,
+    mode: "settle",
+    frame: 0,
+    last: 0,
+  });
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [focusRing, setFocusRing] = useState(keyboard);
   const count = steps.length;
 
-  // The knob and fill read `--knob-x`. It is written here rather than through
-  // React's style prop so a drag can move it on every pointer event without
-  // a render.
+  // One position, the knob's center, draws both the knob and the fill, so
+  // the fill always ends exactly under the knob's center. Both are written
+  // straight to the elements: the knob as a transform, the fill as a clip on
+  // a full-width bar, so neither moves layout and a drag never renders.
+  const paint = (center: number) => {
+    if (knob.current) {
+      knob.current.style.transform = `translate3d(${center - KNOB_HALF}px, 0, 0)`;
+    }
+    if (fill.current) {
+      fill.current.style.clipPath = `inset(0 ${SLIDER_TRACK_WIDTH - center}px 0 0 round 10px)`;
+    }
+  };
+
+  const tick = (now: number) => {
+    const m = motion.current;
+    m.frame = 0;
+    const dt = m.last
+      ? Math.min((now - m.last) / 1000, MAX_FRAME_SECONDS)
+      : 1 / 60;
+    m.last = now;
+    const next =
+      m.mode === "follow"
+        ? followStep(m, m.target, dt)
+        : springStep(m, m.target, dt);
+    m.pos = next.pos;
+    m.vel = next.vel;
+    const resting =
+      m.mode === "follow"
+        ? Math.abs(m.pos - m.target) < 0.05
+        : isSettled(m, m.target);
+    if (resting) {
+      // Land exactly; a later pointer move starts the loop again.
+      m.pos = m.target;
+      m.vel = 0;
+      paint(m.pos);
+      return;
+    }
+    paint(m.pos);
+    m.frame = requestAnimationFrame(tick);
+  };
+
+  /**
+   * Heads the knob for `target`: following the pointer, or springing onto a
+   * dot. With reduced motion, or before the first paint, it is there at once.
+   */
+  const animateTo = (target: number, mode: Motion["mode"]) => {
+    const m = motion.current;
+    m.target = target;
+    m.mode = mode;
+    if (Number.isNaN(m.pos) || prefersReducedMotion()) {
+      if (m.frame) cancelAnimationFrame(m.frame);
+      m.frame = 0;
+      m.pos = target;
+      m.vel = 0;
+      paint(target);
+      return;
+    }
+    if (!m.frame) {
+      m.last = 0;
+      m.frame = requestAnimationFrame(tick);
+    }
+  };
+
+  // At rest the knob sits on the session's step; a change of step (a key,
+  // a release, a preset edit) springs it there.
   useLayoutEffect(() => {
-    if (drag.current) return;
-    const offset = index >= 0 ? stepCenter(index, count) - KNOB_HALF : 0;
-    track.current?.style.setProperty("--knob-x", `${offset}px`);
+    if (drag.current || index < 0) return;
+    animateTo(stepCenter(index, count), "settle");
   }, [index, count, dragIndex]);
+
+  useEffect(
+    () => () => {
+      const m = motion.current;
+      if (m.frame) cancelAnimationFrame(m.frame);
+    },
+    [],
+  );
 
   // The popover focuses its frame; the track takes focus once it is on
   // screen so the arrow keys work straight away.
@@ -134,8 +238,13 @@ export function ModelPresetSlider({
     const current = drag.current;
     if (!current) return;
     const { index: next, center } = dragStepAt(x, current.index, count);
-    track.current?.style.setProperty("--knob-x", `${center - KNOB_HALF}px`);
     moveTo(next);
+    // Reduced motion skips the glide: the knob only jumps from step to step.
+    const target =
+      prefersReducedMotion() && current.index >= 0
+        ? stepCenter(current.index, count)
+        : center;
+    animateTo(target, "follow");
   };
 
   const finish = (commit: boolean) => {
@@ -252,7 +361,7 @@ export function ModelPresetSlider({
         onKeyDown={onKeyDown}
         className="model-slider-track relative h-6.5 w-[342px] shrink-0 touch-none rounded-[10px] outline-1 -outline-offset-2 outline-content/10"
       >
-        <span aria-hidden="true" className="model-slider-fill" />
+        <span ref={fill} aria-hidden="true" className="model-slider-fill" />
         {steps.map((step, stepIndex) => (
           <span
             key={step.preset.id}
@@ -270,7 +379,7 @@ export function ModelPresetSlider({
             <span aria-hidden="true" className="model-slider-ripple" />
           </Fragment>
         ) : null}
-        <span aria-hidden="true" className="model-slider-knob" />
+        <span ref={knob} aria-hidden="true" className="model-slider-knob" />
       </div>
     </div>
   );

@@ -166,10 +166,10 @@ html.theme-light [data-model-family="opus"] {
   font-family: "MonoCode Slider Serif", ui-serif, "New York", Georgia, serif;
 }
 
+/* The knob's position and the fill's extent are set from script each frame
+   (ModelPresetSlider.tsx): the knob as a transform, the fill as a clip on a
+   full-width bar ending at the knob's center. Neither moves layout. */
 .model-slider-track {
-  --knob-x: 0px;
-  /* Settling on a step overshoots a little and springs back. */
-  --slider-settle: 420ms cubic-bezier(0.34, 1.45, 0.5, 1);
   background-color: var(--slider-rail);
   cursor: grab;
   outline-style: solid;
@@ -190,16 +190,14 @@ html.theme-light [data-model-family="opus"] {
   top: 0;
   left: 0;
   height: 100%;
-  width: calc(var(--knob-x) + 18px);
+  width: 100%;
   border-radius: 10px;
+  /* A gradient spans the whole rail, so a longer fill reveals more of it. */
   background: var(--slider-fill);
-  /* A gradient spans the whole rail, so a wider fill reveals more of it. */
-  background-size: 342px 100%;
   outline: 1px solid color-mix(in srgb, var(--color-content) 40%, transparent);
   outline-offset: -2px;
-  transition:
-    width var(--slider-settle),
-    background-color 200ms var(--motion-ease-out);
+  clip-path: inset(0 100% 0 0 round 10px);
+  transition: background-color 200ms var(--motion-ease-out);
 }
 
 .model-slider-dot {
@@ -229,8 +227,6 @@ html.theme-light [data-model-family="opus"] {
   background-color: var(--color-background-base);
   outline: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
   outline-offset: -2px;
-  transform: translateX(var(--knob-x));
-  transition: transform var(--slider-settle);
   will-change: transform;
   pointer-events: none;
 }
@@ -242,11 +238,6 @@ html.theme-light [data-model-family="opus"] {
 .model-slider-track[data-empty] .model-slider-knob,
 .model-slider-track[data-empty] .model-slider-fill {
   opacity: 0;
-}
-
-/* While dragging, a short glide smooths the pointer and the pull onto a dot. */
-.model-slider-track[data-dragging] {
-  --slider-settle: 110ms var(--motion-ease-out);
 }
 
 .model-slider-tiles-clip {
@@ -315,8 +306,7 @@ html.theme-light [data-model-family="opus"] {
 @media (prefers-reduced-motion: reduce) {
   .model-slider-label,
   .model-slider-globe,
-  .model-slider-fill,
-  .model-slider-knob {
+  .model-slider-fill {
     transition: none;
   }
 

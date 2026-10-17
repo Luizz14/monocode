@@ -158,3 +158,60 @@ test("sets the slider in the bundled faces", async ({ page }) => {
     ]),
   );
 });
+
+test("keeps the fill's end under the knob's center through a drag", async ({
+  page,
+}, testInfo) => {
+  const track = await openSlider(page);
+  const box = (await track.boundingBox())!;
+  const y = box.y + box.height / 2;
+  // Knob center from layout, fill end from the fill's box minus its clip.
+  const sample = () =>
+    page.evaluate(() => {
+      const knob = document
+        .querySelector(".model-slider-knob")!
+        .getBoundingClientRect();
+      const fill = document.querySelector<HTMLElement>(".model-slider-fill")!;
+      const rect = fill.getBoundingClientRect();
+      const inset = /inset\(0(?:px)? (-?[\d.]+)px/.exec(
+        getComputedStyle(fill).clipPath,
+      );
+      const center = knob.left + knob.width / 2;
+      return {
+        center,
+        gap: Math.abs(center - (rect.right - Number(inset![1]))),
+      };
+    });
+
+  const gaps: number[] = [];
+  const centers: number[] = [];
+  await page.mouse.move(box.x + 158.4, y);
+  await page.mouse.down();
+  for (let x = 158.4; x <= 330; x += 6) {
+    await page.mouse.move(box.x + x, y);
+    const { gap, center } = await sample();
+    gaps.push(gap);
+    centers.push(center - box.x);
+  }
+  for (let x = 330; x >= 40; x -= 9) {
+    await page.mouse.move(box.x + x, y);
+    const { gap, center } = await sample();
+    gaps.push(gap);
+    centers.push(center - box.x);
+  }
+  await page.mouse.move(box.x + 120, y);
+  await page.mouse.up();
+  for (let i = 0; i < 25; i += 1) {
+    await page.waitForTimeout(16);
+    gaps.push((await sample()).gap);
+  }
+
+  const max = Math.max(...gaps);
+  const mean = gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length;
+  const note = `${gaps.length} samples, max ${max.toFixed(4)}px, mean ${mean.toFixed(4)}px`;
+  testInfo.annotations.push({ type: "alignment", description: note });
+  console.log(`knob/fill alignment: ${note}`);
+  expect(max).toBeLessThan(1);
+  // The knob really moved through the rail, not just between two dots.
+  expect(Math.max(...centers) - Math.min(...centers)).toBeGreaterThan(200);
+});

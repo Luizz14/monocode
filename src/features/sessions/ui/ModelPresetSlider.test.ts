@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, createElement } from "react";
+import { act, createElement, Profiler } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -50,8 +50,24 @@ const steps = resolvePresetSteps(
 let container: HTMLDivElement;
 let root: Root;
 
+// Animation frames run only when a test asks, on a 60fps clock.
+let frameQueue = new Map<number, FrameRequestCallback>();
+let frameId = 0;
+let clock = 0;
+
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  frameQueue = new Map();
+  frameId = 0;
+  clock = 0;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frameId += 1;
+    frameQueue.set(frameId, callback);
+    return frameId;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+    frameQueue.delete(id);
+  });
   haptic.mockClear();
   container = document.createElement("div");
   document.body.append(container);
@@ -115,8 +131,33 @@ function pointer(target: HTMLElement, type: string, clientX: number) {
   });
 }
 
-function knobX(track: HTMLElement): string {
-  return track.style.getPropertyValue("--knob-x");
+/** Runs animation frames for `ms`, calling `onFrame` after each. */
+function frames(ms: number, onFrame?: () => void) {
+  const end = clock + ms;
+  while (clock < end && frameQueue.size > 0) {
+    clock += 1000 / 60;
+    const due = [...frameQueue.values()];
+    frameQueue.clear();
+    act(() => due.forEach((callback) => callback(clock)));
+    onFrame?.();
+  }
+}
+
+/** Lets the knob finish gliding or springing. */
+const settle = () => frames(2000);
+
+/** The knob's center, read back from its transform. */
+function knobCenter(): number {
+  const knob = container.querySelector<HTMLElement>(".model-slider-knob")!;
+  const match = /translate3d\((-?[\d.]+)px/.exec(knob.style.transform);
+  return Number(match?.[1]) + 18;
+}
+
+/** Where the fill ends, read back from its clip. */
+function fillEdge(): number {
+  const fill = container.querySelector<HTMLElement>(".model-slider-fill")!;
+  const match = /inset\(0(?:px)? (-?[\d.]+)px/.exec(fill.style.clipPath);
+  return 342 - Number(match?.[1]);
 }
 
 const panel = () =>
@@ -132,7 +173,8 @@ describe("ModelPresetSlider", () => {
     expect(track.getAttribute("aria-valuenow")).toBe("2");
     expect(track.getAttribute("aria-valuetext")).toBe("Opus 5.5 High");
     expect(container.querySelectorAll(".model-slider-dot")).toHaveLength(6);
-    expect(knobX(track)).toBe(`${stepCenter(2, 6) - 18}px`);
+    expect(knobCenter()).toBe(stepCenter(2, 6));
+    expect(fillEdge()).toBe(stepCenter(2, 6));
     expect(panel().dataset.effortTone).toBeUndefined();
   });
 
@@ -194,13 +236,15 @@ describe("ModelPresetSlider", () => {
 
       // Halfway to the next dot the knob follows the pointer, still on High.
       pointer(track, "pointermove", stepCenter(2, 6) + 32);
-      expect(knobX(track)).toBe(`${stepCenter(2, 6) + 32 - 18}px`);
+      settle();
+      expect(knobCenter()).toBeCloseTo(stepCenter(2, 6) + 32, 6);
       expect(track.getAttribute("aria-valuetext")).toBe("Opus 5.5 High");
       expect(haptic).not.toHaveBeenCalled();
 
       // Near the dot it is pulled onto it and takes its step.
       pointer(track, "pointermove", stepCenter(3, 6) - 12);
-      expect(knobX(track)).toBe(`${stepCenter(3, 6) - 18}px`);
+      settle();
+      expect(knobCenter()).toBeCloseTo(stepCenter(3, 6), 6);
       expect(track.getAttribute("aria-valuetext")).toBe("Opus 5.5 Max");
       expect(panel().dataset.effortTone).toBe("max");
       expect(haptic).toHaveBeenCalledTimes(1);
@@ -261,7 +305,10 @@ describe("ModelPresetSlider", () => {
       const { track, onCommit } = render();
       pointer(track, "pointerdown", stepCenter(2, 6));
       pointer(track, "pointermove", -200);
-      expect(knobX(track)).toBe(`${stepCenter(0, 6) - 18}px`);
+      settle();
+      expect(knobCenter()).toBeCloseTo(stepCenter(0, 6), 6);
+      // The first step leaves fill showing left of the knob.
+      expect(knobCenter() - 18).toBe(30);
       pointer(track, "pointerup", -200);
       expect(onCommit).toHaveBeenCalledWith(0);
     });
@@ -273,7 +320,8 @@ describe("ModelPresetSlider", () => {
       pointer(track, "pointermove", stepCenter(2, 6) + 6);
       pointer(track, "pointerup", stepCenter(2, 6) + 6);
       expect(onCommit).not.toHaveBeenCalled();
-      expect(knobX(track)).toBe(`${stepCenter(2, 6) - 18}px`);
+      settle();
+      expect(knobCenter()).toBeCloseTo(stepCenter(2, 6), 6);
     });
 
     it("drops a cancelled drag", () => {
@@ -389,5 +437,127 @@ describe("ModelPresetSlider", () => {
     )!;
     act(() => label.click());
     expect(onOpenModels).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ModelPresetSlider motion", () => {
+  it("ends the fill at the knob's center on every frame", () => {
+    const { track } = render();
+    const gaps: number[] = [];
+    const measure = () => gaps.push(Math.abs(knobCenter() - fillEdge()));
+    pointer(track, "pointerdown", stepCenter(2, 6));
+    for (const x of [175, 196, 230, 262, 300, 120, 60]) {
+      pointer(track, "pointermove", x);
+      frames(48, measure);
+    }
+    pointer(track, "pointerup", 60);
+    frames(600, measure);
+    expect(gaps.length).toBeGreaterThan(40);
+    expect(Math.max(...gaps)).toBeLessThan(1e-9);
+  });
+
+  it("glides after the pointer instead of jumping", () => {
+    const { track } = render();
+    const from = stepCenter(2, 6);
+    const to = stepCenter(2, 6) + 32;
+    pointer(track, "pointerdown", from);
+    pointer(track, "pointermove", to);
+    // Nothing moves until a frame runs, and one frame covers part of the way.
+    expect(knobCenter()).toBe(from);
+    frames(1000 / 60);
+    expect(knobCenter()).toBeGreaterThan(from);
+    expect(knobCenter()).toBeLessThan(to);
+    // Within about 1px of the pointer after 100ms.
+    frames(100);
+    expect(to - knobCenter()).toBeLessThan(1);
+  });
+
+  it("springs onto the dot on release, a little past it and back", () => {
+    const { track, onCommit } = render();
+    pointer(track, "pointerdown", stepCenter(2, 6));
+    pointer(track, "pointermove", stepCenter(3, 6));
+    // Held on Max with the pointer between dots, then let go.
+    pointer(track, "pointermove", stepCenter(3, 6) + 25);
+    settle();
+    pointer(track, "pointerup", stepCenter(3, 6) + 25);
+    expect(onCommit).toHaveBeenCalledWith(3);
+    // The parent applies the step, as the composer does.
+    render({ index: 3, effortLabel: "Max", tone: "max" });
+    const path: number[] = [];
+    frames(1000, () => path.push(knobCenter()));
+    const target = stepCenter(3, 6);
+    expect(Math.min(...path)).toBeLessThan(target - 0.5);
+    expect(Math.min(...path)).toBeGreaterThan(target - 6);
+    expect(knobCenter()).toBe(target);
+  });
+
+  it("springs to a step chosen from the keyboard", () => {
+    const view = render();
+    key(view.track, "ArrowRight");
+    render({ index: 3, effortLabel: "Max", tone: "max" });
+    expect(knobCenter()).toBe(stepCenter(2, 6));
+    frames(1000 / 60);
+    expect(knobCenter()).toBeGreaterThan(stepCenter(2, 6));
+    settle();
+    expect(knobCenter()).toBe(stepCenter(3, 6));
+  });
+
+  it("only jumps from step to step under reduced motion", () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("prefers-reduced-motion"),
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const { track } = render();
+    frames(100);
+    const requested = frameId;
+    pointer(track, "pointerdown", stepCenter(2, 6));
+    pointer(track, "pointermove", stepCenter(2, 6) + 32);
+    // Between dots the knob stays on its step.
+    expect(knobCenter()).toBe(stepCenter(2, 6));
+    pointer(track, "pointermove", stepCenter(3, 6) - 12);
+    expect(knobCenter()).toBe(stepCenter(3, 6));
+    expect(fillEdge()).toBe(stepCenter(3, 6));
+    pointer(track, "pointerup", stepCenter(3, 6) - 12);
+    render({ index: 3, effortLabel: "Max", tone: "max" });
+    expect(knobCenter()).toBe(stepCenter(3, 6));
+    // No animation frame was ever asked for.
+    expect(frameId).toBe(requested);
+  });
+
+  it("renders only when the drag crosses into another step", () => {
+    let renders = 0;
+    const handlers = {
+      onCommit: vi.fn(),
+      onOpenModels: vi.fn(),
+      onDone: vi.fn(),
+    };
+    act(() =>
+      root.render(
+        createElement(
+          Profiler,
+          { id: "slider", onRender: () => (renders += 1) },
+          createElement(ModelPresetSlider, {
+            steps,
+            index: 2,
+            modelLabel: "Opus 5.5",
+            effortLabel: "High",
+            haptics: true,
+            ...handlers,
+          }),
+        ),
+      ),
+    );
+    const track = container.querySelector<HTMLElement>('[role="slider"]')!;
+    pointer(track, "pointerdown", stepCenter(2, 6));
+    const afterPress = renders;
+    for (const x of [161, 165, 170, 175, 180, 185, 190]) {
+      pointer(track, "pointermove", x);
+      frames(32);
+    }
+    expect(renders).toBe(afterPress);
+    pointer(track, "pointermove", stepCenter(3, 6));
+    expect(renders).toBe(afterPress + 1);
   });
 });
