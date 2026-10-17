@@ -55,7 +55,7 @@
     },
     "macOS": {
       "entitlements": "Entitlements.plist",
-      "signingIdentity": "-"
+      "signingIdentity": "F0C2DCA92A7673E3AEC5213EDCB4F1698733E109"
     },
     "linux": {
       "rpm": {
