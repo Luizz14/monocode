@@ -179,12 +179,6 @@ html.theme-light [data-model-family="opus"] {
   cursor: grabbing;
 }
 
-/* The ring shows once the keyboard drives the slider; opening it with the
-   mouse focuses the rail without one, as in the design. */
-.model-slider-track[data-focus-ring]:focus-visible {
-  outline-color: color-mix(in srgb, var(--color-content) 40%, transparent);
-}
-
 .model-slider-fill {
   position: absolute;
   top: 0;
@@ -229,10 +223,15 @@ html.theme-light [data-model-family="opus"] {
   outline-offset: -2px;
   will-change: transform;
   pointer-events: none;
+  transition: box-shadow 160ms var(--motion-ease-out);
 }
 
+/* No focus ring on the rail or the knob: their lines stay as in the design.
+   Once the keyboard drives the slider (opening it with the mouse does not
+   count), a soft glow in the slider's color sits under the knob instead. */
 .model-slider-track[data-focus-ring]:focus-visible .model-slider-knob {
-  outline-color: color-mix(in srgb, var(--color-content) 40%, transparent);
+  box-shadow: 0 0 14px 0
+    color-mix(in srgb, var(--slider-accent) 45%, transparent);
 }
 
 .model-slider-track[data-empty] .model-slider-knob,
@@ -306,7 +305,8 @@ html.theme-light [data-model-family="opus"] {
 @media (prefers-reduced-motion: reduce) {
   .model-slider-label,
   .model-slider-globe,
-  .model-slider-fill {
+  .model-slider-fill,
+  .model-slider-knob {
     transition: none;
   }
 

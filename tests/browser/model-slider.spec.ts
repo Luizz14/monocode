@@ -265,3 +265,34 @@ test("shows the panel's inset line over composited glass", async ({
   expect(column[1] - column[0]).toBeGreaterThan(10);
   expect(column[1] - column[3]).toBeGreaterThan(10);
 });
+
+test("marks keyboard focus with a glow, not a ring", async ({ page }) => {
+  const track = await openSlider(page);
+  const knob = page.locator(".model-slider-knob");
+  const looks = () =>
+    page.evaluate(() => {
+      const track = document.querySelector<HTMLElement>('[role="slider"]')!;
+      const knob = document.querySelector<HTMLElement>(".model-slider-knob")!;
+      return {
+        track: getComputedStyle(track).outlineColor,
+        knob: getComputedStyle(knob).outlineColor,
+        glow: getComputedStyle(knob).boxShadow,
+      };
+    });
+  const resting = await looks();
+  expect(resting.glow).toBe("none");
+
+  await page.keyboard.press("ArrowLeft");
+  await expect(track).toBeFocused();
+  await expect.poll(async () => (await looks()).glow).not.toBe("none");
+  const focused = await looks();
+  // The rail and the knob keep their resting lines.
+  expect(focused.track).toBe(resting.track);
+  expect(focused.knob).toBe(resting.knob);
+  await expect(knob).toBeVisible();
+
+  // A pointer press drops the glow again.
+  const box = (await track.boundingBox())!;
+  await page.mouse.click(box.x + 48, box.y + 13);
+  await expect.poll(async () => (await looks()).glow).toBe("none");
+});
