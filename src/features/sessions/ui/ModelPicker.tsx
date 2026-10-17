@@ -49,7 +49,7 @@ import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
 import { LAYER } from "../../../shared/lib/layers";
 import { HarnessIcon } from "./HarnessIcon";
 import { EffortTileShimmer } from "./EffortTileShimmer";
-import { ModelPresetSlider } from "./ModelPresetSlider";
+import { ModelPresetSlider, warmSliderFonts } from "./ModelPresetSlider";
 import {
   currentStepIndex,
   effortTone,
@@ -448,6 +448,10 @@ export function ModelPicker({
   const currentEffortValue = currentEffortSetting
     ? settingValue(currentEffortSetting, values)
     : undefined;
+
+  useEffect(() => {
+    if (presetSlider) warmSliderFonts();
+  }, [presetSlider]);
   const visibleTab = coerceModelPickerTab(tab, (id) =>
     pickerHarnesses.includes(id),
   );

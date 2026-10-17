@@ -45,6 +45,23 @@ type Props = {
 
 type Drag = { pointerId: number; index: number };
 
+let fontsWarmed = false;
+
+/**
+ * Starts loading the slider's bundled faces, so the panel opens in them
+ * rather than waiting out `font-display: block` on first use.
+ */
+export function warmSliderFonts() {
+  if (fontsWarmed || typeof document === "undefined") return;
+  const fonts = document.fonts as FontFaceSet | undefined;
+  if (!fonts?.load) return;
+  fontsWarmed = true;
+  void fonts.load('500 22px "MonoCode Slider Mono"', "Opus").catch(() => {});
+  void fonts
+    .load('italic 400 22px "MonoCode Slider Serif"', "High")
+    .catch(() => {});
+}
+
 const KNOB_HALF = SLIDER_KNOB_SIZE / 2;
 
 /**

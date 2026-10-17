@@ -79,3 +79,26 @@ test("lights the rail for Max, Ultracode, and Ultrathink", async ({ page }) => {
   ).toEqual([null, "max", "ultracode", "ultrathink"]);
   await expect(page.locator(".model-slider-tiles")).toHaveCount(3);
 });
+
+test("sets the slider in the bundled faces", async ({ page }) => {
+  await page.goto("/tests/browser/model-slider.html?view=states");
+  await expect(page.locator("[data-model-slider]").first()).toBeVisible();
+  const loaded = await page.evaluate(async () => {
+    await document.fonts.ready;
+    return [...document.fonts]
+      .filter((face) =>
+        face.family.replace(/"/g, "").startsWith("MonoCode Slider"),
+      )
+      .filter((face) => face.status === "loaded")
+      .map(
+        (face) =>
+          `${face.family.replace(/"/g, "")} ${face.style} ${face.weight}`,
+      );
+  });
+  expect(loaded).toEqual(
+    expect.arrayContaining([
+      "MonoCode Slider Mono normal 500",
+      "MonoCode Slider Serif italic 400",
+    ]),
+  );
+});
