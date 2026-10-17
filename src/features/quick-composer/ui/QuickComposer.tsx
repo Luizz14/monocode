@@ -82,6 +82,7 @@ import {
   resolveQuickModel,
   type QuickLaunch,
 } from "../model/quickComposer";
+import { RollText } from "../../../shared/ui/RollText";
 
 /** Tallest the prompt grows before it scrolls, in px. */
 const PROMPT_MAX_HEIGHT = 220;
@@ -549,9 +550,10 @@ export function QuickComposer({ onShown }: { onShown: () => void }) {
               className="size-3 shrink-0"
             />
           ) : null}
-          <span className="truncate">
-            {cwd ? projectName(cwd) : "No project"}
-          </span>
+          <RollText
+            text={cwd ? projectName(cwd) : "No project"}
+            className="truncate"
+          />
           <ChevronDown className="size-3 shrink-0 opacity-60" />
         </button>
       </div>
@@ -665,7 +667,7 @@ export function QuickComposer({ onShown }: { onShown: () => void }) {
           className={`flex min-w-0 max-w-[40%] items-center gap-1.5 rounded-md px-2 py-1 text-[12px] ${picker === "model" ? "bg-selection-emphasis text-content" : "text-content/70 hover:bg-selection-hover hover:text-content"}`}
         >
           <HarnessIcon harness={model.harness} className="size-3.5 shrink-0" />
-          <span className="truncate">{model.name}</span>
+          <RollText text={model.name} className="truncate" />
           <ChevronDown className="size-3 shrink-0 opacity-60" />
         </button>
         {model.harness !== "fx" ? (
@@ -681,7 +683,10 @@ export function QuickComposer({ onShown }: { onShown: () => void }) {
               mode={runtimeMode}
               className="size-3.5 shrink-0"
             />
-            <span className="truncate">{RUNTIME_MODE_LABEL[runtimeMode]}</span>
+            <RollText
+              text={RUNTIME_MODE_LABEL[runtimeMode]}
+              className="truncate"
+            />
             <ChevronDown className="size-3 shrink-0 opacity-60" />
           </button>
         ) : null}

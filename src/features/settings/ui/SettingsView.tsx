@@ -237,10 +237,12 @@ import {
 } from "../../providers/model/providerAccountIdentity";
 import { ProviderAccountSubtitle } from "../../providers/ui/ProviderAccountSubtitle";
 import {
+  saveAnimateNumbers,
   saveComposerAutocorrect,
   saveMaskEmails,
   saveRailMonosPinned,
   saveShowRemainingUsage,
+  useAnimateNumbers,
   useComposerAutocorrect,
   useMaskEmails,
   useRailMonosPinned,
@@ -2115,6 +2117,7 @@ function useAppearanceSettings(
 function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
   const percent = Math.round(appearance.opacity * 100);
   const glassDisabled = useColorScheme() === "light";
+  const animateNumbers = useAnimateNumbers();
 
   return (
     <>
@@ -2315,6 +2318,20 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
             label="Show excluded files"
             on={appearance.showExcludedFiles}
             onChange={appearance.onShowExcludedFiles}
+          />
+        </Row>
+      </Group>
+
+      <Group title="Motion">
+        <Row
+          id="animate-numbers"
+          label="Animate changing numbers"
+          description="Roll usage percentages, diff stats, ahead and behind counts, badges and timers to their new value. Turn off to keep them still; labels such as the model and branch still roll."
+        >
+          <Toggle
+            label="Animate changing numbers"
+            on={animateNumbers}
+            onChange={saveAnimateNumbers}
           />
         </Row>
       </Group>

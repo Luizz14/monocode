@@ -13,6 +13,7 @@ import {
   Plus,
   Search,
 } from "../../../shared/ui/icons";
+import { RollNumber, RollText } from "../../../shared/ui/RollText";
 
 /** The sidebar title. Picking a worktree narrows the sidebar, and the
  * sessions opened from it, to that working copy and names it here. */
@@ -180,7 +181,7 @@ export function SidebarWorktreeSwitcher({
         }}
         className="-ml-1.5 flex h-6.5 min-w-0 max-w-full items-center gap-2 rounded-md px-1.5 text-sm font-medium leading-tight hover:bg-content/8 aria-expanded:bg-content/8"
       >
-        <span className="min-w-0 truncate">{title}</span>
+        <RollText text={title} className="min-w-0 truncate" />
         {pending || creating ? (
           <Loader
             aria-label={
@@ -344,7 +345,7 @@ function OpenTabs({ stats }: { stats?: { tabs: number; busy: boolean } }) {
       {stats.busy ? (
         <span className="size-1.5 animate-pulse rounded-full bg-accent" />
       ) : null}
-      {stats.tabs}
+      <RollNumber text={stats.tabs} />
     </span>
   );
 }

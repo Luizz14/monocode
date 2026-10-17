@@ -88,6 +88,7 @@ import {
 import { remoteProjectFor } from "../../features/connections/model/remoteProjects";
 import { useProjectMenu } from "./useProjectMenu";
 import { MonoRailSection, type MonoRailProps } from "./MonoRailSection";
+import { RollNumber } from "../../shared/ui/RollText";
 
 type Props = {
   visible?: boolean;
@@ -1118,10 +1119,16 @@ function ProjectDiffStat({
       className="flex shrink-0 items-center gap-1 font-sans text-[11px] font-semibold tabular-nums"
     >
       {additions > 0 ? (
-        <span className="text-diff-add-fg">+{formatInteger(additions)}</span>
+        <RollNumber
+          text={`+${formatInteger(additions)}`}
+          className="text-diff-add-fg"
+        />
       ) : null}
       {deletions > 0 ? (
-        <span className="text-diff-del-fg">-{formatInteger(deletions)}</span>
+        <RollNumber
+          text={`-${formatInteger(deletions)}`}
+          className="text-diff-del-fg"
+        />
       ) : null}
     </span>
   );

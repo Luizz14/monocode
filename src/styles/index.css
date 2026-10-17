@@ -661,6 +661,47 @@ html.has-chat-background.chat-background-effect-ready.chat-background-gradient-b
   mask-image: var(--tab-label-mask);
 }
 
+/* Rolling labels (RollText): clip sideways like the truncating label, but let
+   glyphs rise and fall past the line box while they roll. */
+.roll-text[data-rolling] {
+  overflow-x: clip;
+  overflow-y: visible;
+  text-overflow: clip;
+}
+
+.roll-text-sizer {
+  position: relative;
+  display: inline-block;
+  max-width: none;
+  /* Chips are buttons, which center text: while a shrinking label's box is
+     still wider than the new line, keep both lines on the same left edge. */
+  text-align: start;
+  white-space: pre;
+}
+
+.roll-text-line {
+  display: inline-block;
+}
+
+.roll-text-line[data-side="from"] {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.roll-text-run {
+  display: inline-block;
+  white-space: pre;
+}
+
+.roll-text-run::before {
+  content: attr(data-text);
+}
+
+.roll-text-glyph {
+  transform-origin: center;
+}
+
 /* Fade scrolling content at the bottom viewport edge. */
 .sidebar-session-scroll,
 .transcript-composer-fade .agent-transcript {

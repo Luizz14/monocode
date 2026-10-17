@@ -80,6 +80,7 @@ import { MOD } from "../../../platform/tauri/platform";
 import { applyProjectDiffStats } from "../hooks/useProjectDiffStats";
 import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
 import { isRemoteProjectPath } from "../../projects/model/recents";
+import { RollNumber } from "../../../shared/ui/RollText";
 
 const GIT_POLL_MS = 2000;
 
@@ -197,14 +198,16 @@ export function GitChangesPanel({
               <GitBranch className="size-3 shrink-0" strokeWidth={1.75} />
               <span className="min-w-0 truncate">{index.branch}</span>
               {index.ahead > 0 ? (
-                <span className="shrink-0 tabular-nums text-content/40">
-                  ↑{index.ahead}
-                </span>
+                <RollNumber
+                  text={`↑${index.ahead}`}
+                  className="shrink-0 tabular-nums text-content/40"
+                />
               ) : null}
               {index.behind > 0 ? (
-                <span className="shrink-0 tabular-nums text-content/40">
-                  ↓{index.behind}
-                </span>
+                <RollNumber
+                  text={`↓${index.behind}`}
+                  className="shrink-0 tabular-nums text-content/40"
+                />
               ) : null}
             </span>
             <button
@@ -1086,14 +1089,16 @@ export function GitSyncActions({
           />
           <span className="min-w-0 truncate">Sync Changes</span>
           {behind > 0 ? (
-            <span className="shrink-0 tabular-nums text-content/55">
-              ↓{behind}
-            </span>
+            <RollNumber
+              text={`↓${behind}`}
+              className="shrink-0 tabular-nums text-content/55"
+            />
           ) : null}
           {ahead > 0 ? (
-            <span className="shrink-0 tabular-nums text-content/55">
-              ↑{ahead}
-            </span>
+            <RollNumber
+              text={`↑${ahead}`}
+              className="shrink-0 tabular-nums text-content/55"
+            />
           ) : null}
         </button>
       ) : null}

@@ -55,6 +55,7 @@ import {
 } from "../../features/providers/model/providerAccountIdentity";
 import { ProviderAccountSubtitle } from "../../features/providers/ui/ProviderAccountSubtitle";
 import { useShowRemainingUsage } from "../../features/settings/model/displayPrefs";
+import { RollNumber } from "../../shared/ui/RollText";
 
 type UsageWindowEntry = {
   key: "session" | "weekly" | "monthly";
@@ -283,14 +284,13 @@ export function UsageProviderChip({
                   {index > 0 ? (
                     <span className="text-content/25">·</span>
                   ) : null}
-                  <span>
-                    {formatUsagePercent(
+                  <RollNumber
+                    text={`${formatUsagePercent(
                       showRemaining
                         ? 100 - clampUsedPercent(entry.window.usedPercent)
                         : entry.window.usedPercent,
-                    )}{" "}
-                    {formatRateLimitWindowChipLabel(entry.window, now)}
-                  </span>
+                    )} ${formatRateLimitWindowChipLabel(entry.window, now)}`}
+                  />
                 </span>
               ))}
             </span>

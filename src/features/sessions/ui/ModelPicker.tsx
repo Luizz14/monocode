@@ -49,6 +49,7 @@ import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
 import { LAYER } from "../../../shared/lib/layers";
 import { HarnessIcon } from "./HarnessIcon";
 import { Popover } from "../../../shared/ui/Popover";
+import { RollText } from "../../../shared/ui/RollText";
 import { MOD } from "../../../platform/tauri/platform";
 import { keybindingPressed } from "../../settings/model/settings";
 import "./ModelPicker.css";
@@ -776,17 +777,15 @@ export function ModelPicker({
           harness={current.harness}
           className={`${variant === "pill" ? "size-4" : "size-3.5"} shrink-0`}
         />
-        <span
+        <RollText
+          text={triggerLabel ?? triggerModelName}
           className={`whitespace-nowrap ${variant === "pill" ? "text-[11px]" : ""} ${labelClassName}`}
-        >
-          {triggerLabel ?? triggerModelName}
-        </span>
+        />
         {!triggerLabel && triggerEffortLabel ? (
-          <span
+          <RollText
+            text={triggerEffortLabel}
             className={`shrink-0 text-content/50 ${variant === "pill" ? "text-[11px]" : ""} ${labelClassName}`}
-          >
-            {triggerEffortLabel}
-          </span>
+          />
         ) : null}
         {variant === "text" ? null : (
           <ChevronDown
@@ -1366,11 +1365,10 @@ function SelectPill({
         ) : setting.id === "serviceTier" ? (
           <Zap className="size-3.5 shrink-0" strokeWidth={1.75} />
         ) : null}
-        <span
+        <RollText
+          text={valueLabel}
           className={`min-w-0 truncate ${variant === "pill" ? "text-[11px]" : ""} ${iconic ? labelClassName : ""}`}
-        >
-          {valueLabel}
-        </span>
+        />
         {variant === "text" ? null : (
           <ChevronDown
             className={`size-3 shrink-0 text-content/50 ${open ? "rotate-180" : ""}`}

@@ -346,6 +346,13 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     keywords: "explorer gitignore ignored hidden files tree",
   },
   {
+    id: "animate-numbers",
+    section: "appearance",
+    label: "Animate changing numbers",
+    keywords:
+      "motion animation roll counters usage percent diff stats timers badges",
+  },
+  {
     id: "chat-background",
     section: "appearance",
     label: "Chat background",

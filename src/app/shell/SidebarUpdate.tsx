@@ -8,6 +8,7 @@ import {
 } from "../model/updater";
 import type { InstalledUpdate } from "../model/updateNotice";
 import { UpdateRailCard } from "./UpdateRailCard";
+import { RollNumber } from "../../shared/ui/RollText";
 
 // The sidebar row only earns its space when there is something to act on: an
 // update waiting to be installed, or one already downloading. Every other phase
@@ -136,9 +137,10 @@ export function SidebarUpdate({
         )}
       </span>
       <span className="min-w-0 flex-1 flex items-center">
-        <span className="block truncate text-[12px] font-medium leading-tight">
-          {label}
-        </span>
+        <RollNumber
+          text={label}
+          className="block truncate text-[12px] font-medium leading-tight"
+        />
         <span className="ml-auto block text-[11px] text-content/40">
           v{snapshot.currentVersion}
         </span>

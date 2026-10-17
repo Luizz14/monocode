@@ -15,6 +15,7 @@ import { Check, ChevronDown, ChevronUp, CircleAlert } from "../../../shared/ui/i
 import { HarnessIcon } from "./HarnessIcon";
 import { ProjectMascot } from "../../projects/ui/ProjectMascot";
 import { TerminalSpinner } from "./TerminalSpinner";
+import { RollNumber } from "../../../shared/ui/RollText";
 
 const LIVE_AGENT_MIN = 2;
 const LIVE_AGENT_CAP = 4;
@@ -85,9 +86,10 @@ export function LiveAgentsPreview({
           <span className="min-w-0 flex-1 truncate text-xs text-content/50">
             Working
           </span>
-          <span className="text-[11px] tabular-nums text-content/40">
-            {agents.length}
-          </span>
+          <RollNumber
+            text={agents.length}
+            className="text-[11px] tabular-nums text-content/40"
+          />
         </div>
         <div
           ref={expanded ? lockList : undefined}
@@ -223,7 +225,7 @@ function LiveAgentCard({
         <HarnessIcon harness={agent.harness} className="size-3 shrink-0" />
         <span className="min-w-0 flex-1 truncate">{project}</span>
         {elapsed ? (
-          <span className="shrink-0 tabular-nums">{elapsed}</span>
+          <RollNumber text={elapsed} className="shrink-0 tabular-nums" />
         ) : null}
       </span>
     </button>

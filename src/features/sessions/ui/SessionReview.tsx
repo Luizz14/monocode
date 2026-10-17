@@ -20,6 +20,7 @@ import { invalidateWatchedFiles } from "../../files/model/fileWatch";
 import { basename, notifyGitChanged } from "../../../platform/tauri/fs";
 import { formatInteger } from "../../../shared/lib/numbers";
 import { FileTypeIcon } from "../../files/ui/FileTypeIcon";
+import { RollNumber } from "../../../shared/ui/RollText";
 
 type Props = {
   sessionId: string;
@@ -117,16 +118,20 @@ export function SessionReview({
           <div className="min-w-0 flex-1">
             <div className="truncate text-[12px] font-medium text-content/80">
               <span title="Workspace changes recorded during the latest turn">
-                Changed {files.length} {files.length === 1 ? "file" : "files"}
+                <RollNumber
+                  text={`Changed ${files.length} ${files.length === 1 ? "file" : "files"}`}
+                />
               </span>
             </div>
             <div className="flex items-center gap-1.5 font-sans text-[11px] font-semibold tabular-nums -mt-0.5">
-              <span className="text-diff-add-fg">
-                +{formatInteger(totals.additions)}
-              </span>
-              <span className="text-diff-del-fg">
-                -{formatInteger(totals.deletions)}
-              </span>
+              <RollNumber
+                text={`+${formatInteger(totals.additions)}`}
+                className="text-diff-add-fg"
+              />
+              <RollNumber
+                text={`-${formatInteger(totals.deletions)}`}
+                className="text-diff-del-fg"
+              />
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-0.5">

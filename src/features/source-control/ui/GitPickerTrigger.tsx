@@ -2,6 +2,7 @@ import { useContext } from "react";
 import { NativePopupHost } from "../../../shared/ui/NativePopupHost";
 import type { ComponentPropsWithoutRef } from "react";
 import { FolderTree, GitBranch } from "../../../shared/ui/icons";
+import { RollText } from "../../../shared/ui/RollText";
 
 type Props = Omit<
   ComponentPropsWithoutRef<"button">,
@@ -31,17 +32,15 @@ export function GitPickerTrigger({
       className={`-ml-1.5 flex h-6 min-w-0 max-w-64 items-center gap-1.5 rounded-md px-1.5 text-[12px] text-content/55 hover:bg-content/8 hover:text-content aria-expanded:bg-content/8 aria-expanded:text-content disabled:hover:bg-transparent disabled:hover:text-content/55 active:scale-[0.97] ${dimWhenDisabled ? "disabled:opacity-40" : ""}`}
     >
       <Icon className="size-3.5 shrink-0" />
-      <span className="relative min-w-0 flex-1 truncate">
-        {loading ? (
-          <>
-            {/* Reserve the same line box while the current branch loads. */}
-            <span className="invisible">main</span>
-            <span className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-current opacity-50" />
-          </>
-        ) : (
-          label
-        )}
-      </span>
+      {loading ? (
+        <span className="relative min-w-0 flex-1 truncate">
+          {/* Reserve the same line box while the current branch loads. */}
+          <span className="invisible">main</span>
+          <span className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-current opacity-50" />
+        </span>
+      ) : (
+        <RollText text={label} className="min-w-0 flex-1 truncate" />
+      )}
       {worktree && (
         <span className="shrink-0 rounded bg-content/8 px-1 text-[10px] text-content/45">
           Worktree

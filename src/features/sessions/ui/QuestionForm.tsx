@@ -15,6 +15,7 @@ import {
   type UserQuestionPrompt,
   type UserQuestionReply,
 } from "../model/userQuestion";
+import { RollNumber } from "../../../shared/ui/RollText";
 
 type Props = {
   prompt: UserQuestionPrompt;
@@ -175,9 +176,13 @@ export function QuestionForm({ prompt, onReply, onInteraction }: Props) {
               className="mr-auto text-[11px] text-content/40"
               title="Interact to keep this question open."
             >
-              {prompt.autoResolveAt - now > 60_000
-                ? "Optional question"
-                : `Continues without an answer in ${Math.max(0, Math.ceil((prompt.autoResolveAt - now) / 1000))}s`}
+              <RollNumber
+                text={
+                  prompt.autoResolveAt - now > 60_000
+                    ? "Optional question"
+                    : `Continues without an answer in ${Math.max(0, Math.ceil((prompt.autoResolveAt - now) / 1000))}s`
+                }
+              />
             </span>
           ) : null}
           {index > 0 ? (

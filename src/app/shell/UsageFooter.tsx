@@ -54,6 +54,7 @@ import {
   subscribeProviderAccounts,
   type ProviderAccountProvider,
 } from "../../features/providers/model/providerAccounts";
+import { RollNumber } from "../../shared/ui/RollText";
 
 const CLOCK_MS = 30_000;
 
@@ -668,9 +669,10 @@ function RunningTerminalChip({
         }}
       >
         <TerminalLiveMark />
-        <span className="truncate font-mono text-[10px] tabular-nums">
-          {label}
-        </span>
+        <RollNumber
+          text={label}
+          className="truncate font-mono text-[10px] tabular-nums"
+        />
       </button>
       {menuOpen && many && !panelOpen ? (
         <Popover

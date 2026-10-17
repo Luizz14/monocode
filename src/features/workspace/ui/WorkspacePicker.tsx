@@ -25,6 +25,7 @@ import {
 } from "../../../shared/ui/icons";
 import { GitPickerTrigger } from "../../source-control/ui/GitPickerTrigger";
 import { Popover } from "../../../shared/ui/Popover";
+import { RollText } from "../../../shared/ui/RollText";
 import { LAYER } from "../../../shared/lib/layers";
 import {
   keybindingPressed,
@@ -286,7 +287,7 @@ function WorkspaceModePicker({
           className="-ml-1.5 flex h-6 min-w-0 max-w-48 items-center gap-1.5 rounded-md px-1.5 text-[12px] text-content/55 hover:bg-content/8 hover:text-content aria-expanded:bg-content/8 aria-expanded:text-content disabled:opacity-40 disabled:hover:bg-transparent active:scale-[0.97]"
         >
           <Icon className="size-3.5 shrink-0" />
-          <span className="truncate">{label}</span>
+          <RollText text={label} className="truncate" />
         </button>
       ) : null}
       {open ? (

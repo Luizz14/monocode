@@ -20,6 +20,7 @@ import { LAYER } from "../../../shared/lib/layers";
 import { Popover } from "../../../shared/ui/Popover";
 import { ProjectLogoIcon } from "./ProjectLogoIcon";
 import { MOD } from "../../../platform/tauri/platform";
+import { RollText } from "../../../shared/ui/RollText";
 
 type Props = {
   cwd: string;
@@ -233,7 +234,7 @@ export function CwdPicker({
         {children ?? (
           <>
             <ProjectLogoIcon path={projectLogoPath} fallbackStrokeWidth={1.5} />
-            <span className="truncate font-mono text-[12px]">{label}</span>
+            <RollText text={label} className="truncate font-mono text-[12px]" />
           </>
         )}
         {chevron ? (

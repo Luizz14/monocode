@@ -18,6 +18,7 @@ import {
   type RuntimeMode,
 } from "../model/session";
 import { Popover } from "../../../shared/ui/Popover";
+import { RollText } from "../../../shared/ui/RollText";
 
 type Props = {
   value: RuntimeMode;
@@ -120,11 +121,10 @@ export function AccessPicker({
           className={`size-3.5 shrink-0 ${value === "full-access" ? "text-amber-400/90" : ""}`}
           strokeWidth={1.75}
         />
-        <span
+        <RollText
+          text={RUNTIME_MODE_LABEL[value]}
           className={`min-w-0 truncate ${variant === "plain" ? "" : "text-[11px]"}`}
-        >
-          {RUNTIME_MODE_LABEL[value]}
-        </span>
+        />
         <ChevronDown
           className={`size-3 shrink-0 text-content/50 ${open ? "rotate-180" : ""}`}
           strokeWidth={1.75}

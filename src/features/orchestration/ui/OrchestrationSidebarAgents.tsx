@@ -13,6 +13,7 @@ import {
 } from "./OrchestrationActions";
 import { Check, ChevronDown, ChevronRight, CircleAlert } from "../../../shared/ui/icons";
 import { TerminalSpinner } from "../../sessions/ui/TerminalSpinner";
+import { RollNumber } from "../../../shared/ui/RollText";
 
 export function OrchestrationSidebarAgents({
   leadId,
@@ -83,13 +84,13 @@ export function OrchestrationSidebarAgents({
   return (
     <div className="relative mt-1.5">
       <div className="mb-0.5 px-0.5 flex items-center justify-between text-[11px] text-content/45">
-        <span>
-          {summary.tasks.length}{" "}
-          {summary.tasks.length === 1 ? "agent" : "agents"}
-        </span>
-        <span className="tabular-nums">
-          {done}/{summary.tasks.length} done
-        </span>
+        <RollNumber
+          text={`${summary.tasks.length} ${summary.tasks.length === 1 ? "agent" : "agents"}`}
+        />
+        <RollNumber
+          text={`${done}/${summary.tasks.length} done`}
+          className="tabular-nums"
+        />
       </div>
       {/*
         Offset by the rows' own padding so a chevron lands on the card's

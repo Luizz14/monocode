@@ -1,12 +1,15 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  loadAnimateNumbers,
   loadComposerAutocorrect,
   loadMaskEmails,
   loadShowRemainingUsage,
+  saveAnimateNumbers,
   saveComposerAutocorrect,
   saveMaskEmails,
   saveShowRemainingUsage,
+  subscribeAnimateNumbers,
   subscribeComposerAutocorrect,
   subscribeMaskEmails,
   subscribeShowRemainingUsage,
@@ -36,6 +39,14 @@ const prefs = [
     load: loadComposerAutocorrect,
     save: saveComposerAutocorrect,
     subscribe: subscribeComposerAutocorrect,
+  },
+  {
+    name: "animate numbers",
+    key: "monocode.animateNumbers",
+    defaultValue: true,
+    load: loadAnimateNumbers,
+    save: saveAnimateNumbers,
+    subscribe: subscribeAnimateNumbers,
   },
 ];
 

@@ -34,6 +34,7 @@ import {
   updateMono,
   type MonoState,
 } from "../../features/monos/model/mono";
+import { RollNumber } from "../../shared/ui/RollText";
 
 export type MonoRailProps = {
   /** The Mono open in the main area, if any. */
@@ -195,7 +196,7 @@ export function MonoRailSection({
                     data-mono-unread={unseen}
                     className="grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-accent px-1 text-[10px] font-medium tabular-nums leading-none text-white group-hover:hidden group-has-[button:focus-visible]:hidden"
                   >
-                    {unreadBadge(unseen)}
+                    <RollNumber text={unreadBadge(unseen)} />
                   </span>
                 ) : null}
               </button>

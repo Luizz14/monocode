@@ -208,6 +208,8 @@ import {
   remotePath,
   remoteProjectFor,
 } from "../../features/connections/model/remoteProjects";
+import { RollNumber } from "../../shared/ui/RollText";
+import { ROLL_TOTAL_MS } from "../../shared/lib/rollText";
 
 const MIN_WIDTH = 260;
 const MAX_WIDTH = 560;
@@ -2872,7 +2874,7 @@ function CompactRailMono({
           data-mono-unread={unseen}
           className="absolute -right-0.5 -top-0.5 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-background-base px-0.5 text-[9px] font-medium tabular-nums leading-none text-content/80 ring-1 ring-content/15"
         >
-          {unreadBadge(unseen)}
+          <RollNumber text={unreadBadge(unseen)} />
         </span>
       ) : null}
     </button>
@@ -3182,7 +3184,7 @@ function FolderRow({
         ) : !expanded && done ? (
           <Check className="size-3 text-emerald-400" strokeWidth={2.25} />
         ) : null}
-        <span>{count}</span>
+        <RollNumber text={count} />
       </span>
     </button>
   );
@@ -4059,10 +4061,15 @@ function DiffStat({
     };
 
     fit();
+    // Rolling digits glide to their new width; fit again once they land.
+    const settle = window.setTimeout(fit, ROLL_TOTAL_MS);
     // Sidebar dragging writes its width directly to the DOM, without a render.
     const observer = new ResizeObserver(fit);
     observer.observe(container);
-    return () => observer.disconnect();
+    return () => {
+      window.clearTimeout(settle);
+      observer.disconnect();
+    };
   }, [additions, deletions]);
 
   if (additions <= 0 && deletions <= 0) return null;
@@ -4103,11 +4110,11 @@ function TightDiffNumber({ value }: { value: number }) {
   const [first, ...rest] = formatInteger(value).split(",");
   return (
     <>
-      {first}
+      <RollNumber text={first} />
       {rest.map((part, index) => (
         <span key={index}>
           <span className="-mr-px">,</span>
-          {part}
+          <RollNumber text={part} />
         </span>
       ))}
     </>

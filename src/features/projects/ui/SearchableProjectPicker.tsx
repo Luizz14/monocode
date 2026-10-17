@@ -31,6 +31,7 @@ import { ProjectMascot } from "./ProjectMascot";
 import { PixelMascot } from "./PixelMascot";
 import { MonoRailMascot } from "../../monos/ui/MonoRailMascot";
 import { MONO_STATUS_LABEL, type MonoStatus } from "../../monos/model/mono";
+import { RollText } from "../../../shared/ui/RollText";
 
 /** A Mono the picker offers beside the projects. */
 export type PickerMono = {
@@ -200,9 +201,10 @@ export function SearchableProjectPicker({
         )}
         {compact ? null : (
           <>
-            <span className="min-w-0 truncate font-medium text-content/90">
-              {activeMono?.name ?? label}
-            </span>
+            <RollText
+              text={activeMono?.name ?? label}
+              className="min-w-0 truncate font-medium text-content/90"
+            />
             <ChevronDown
               className={`size-3 shrink-0 text-content/45 transition-transform ${
                 open ? "rotate-180" : ""

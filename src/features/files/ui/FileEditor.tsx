@@ -96,6 +96,7 @@ import { editorLint } from "../editor/editorLint";
 import { editorSearch } from "../editor/editorSearch";
 import { editorScrollbar } from "../editor/editorScrollbar";
 import { FilePreviewSearch } from "./FilePreviewSearch";
+import { RollNumber } from "../../../shared/ui/RollText";
 
 type EditorNavigationRequest = EditorNavigation & { token: number };
 
@@ -1105,7 +1106,7 @@ function DiffChunkNav({
           <ChevronUp className="size-3.5" strokeWidth={1.75} />
         </button>
         <span className="min-w-10 px-0.5 text-center font-mono text-[10.5px] font-medium tabular-nums text-content/55 select-none">
-          {total === 0 ? "0/0" : `${index + 1}/${total}`}
+          <RollNumber text={total === 0 ? "0/0" : `${index + 1}/${total}`} />
         </span>
         <button
           type="button"

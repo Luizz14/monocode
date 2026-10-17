@@ -17,6 +17,7 @@ import {
   type Habit,
   type HabitRun,
 } from "../model/monoHabits";
+import { RollNumber } from "../../../shared/ui/RollText";
 
 const dayTime = new Intl.DateTimeFormat(undefined, {
   weekday: "short",
@@ -182,7 +183,7 @@ export function RunningFor({ since }: { since: number }) {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
-  return <span className="tabular-nums">{duration(now - since)}</span>;
+  return <RollNumber text={duration(now - since)} className="tabular-nums" />;
 }
 
 function RunningRow({ since }: { since: number }) {
