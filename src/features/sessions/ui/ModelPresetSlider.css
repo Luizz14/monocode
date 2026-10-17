@@ -1,0 +1,250 @@
+/* The composer's model panel. Geometry and colors follow the design: a 342px
+   rail with 6px dots, a 36px knob that overhangs it by 5px, and a fill that
+   runs to the knob's center. Max, Ultracode, and Ultrathink swap the green
+   for the effort menu's tones and replay its tile shimmer on the rail. */
+
+.model-slider {
+  --slider-accent: color(display-p3 0.627 0.756 0.437);
+  --slider-accent-soft: color(display-p3 0.779 0.87 0.657);
+  --slider-fill: var(--slider-accent);
+  --slider-rail: color-mix(
+    in srgb,
+    var(--color-content) 11%,
+    var(--color-background-base)
+  );
+}
+
+.model-slider[data-effort-tone="max"] {
+  --slider-accent: #f4b942;
+  --slider-accent-soft: color-mix(in srgb, #f4b942 55%, white);
+  --codex-effort-color: #f4b942;
+}
+
+.model-slider[data-effort-tone="ultracode"] {
+  --slider-accent: #a855f7;
+  --slider-accent-soft: color-mix(in srgb, #a855f7 55%, white);
+  --codex-effort-color: #a855f7;
+}
+
+.model-slider[data-effort-tone="ultrathink"] {
+  --slider-accent: #e879f9;
+  --slider-accent-soft: color-mix(in srgb, #e879f9 45%, white);
+  --slider-fill: linear-gradient(
+    90deg,
+    #f87171,
+    #fbbf24,
+    #a3e635,
+    #34d399,
+    #38bdf8,
+    #818cf8,
+    #e879f9
+  );
+}
+
+.model-slider-label {
+  cursor: pointer;
+  transition: background-color 120ms var(--motion-ease-out);
+}
+
+.model-slider-label:hover,
+.model-slider-label:focus-visible {
+  background-color: var(--color-selection);
+  outline: none;
+}
+
+.model-slider-globe {
+  color: var(--slider-accent);
+  transition: color 200ms var(--motion-ease-out);
+}
+
+/* JetBrains Mono Medium when an upright face is installed. Naming the faces
+   keeps a family that only ships its italic (some Nerd Font installs) from
+   slanting the model name; without one, the system mono stands in. */
+@font-face {
+  font-family: "MonoCode Slider Mono";
+  font-style: normal;
+  font-weight: 500;
+  src:
+    local("JetBrains Mono Medium"), local("JetBrainsMono-Medium"),
+    local("JetBrainsMono Nerd Font Mono Medium"),
+    local("JetBrainsMonoNFM-Medium"), local("JetBrains Mono");
+}
+
+.model-slider-model {
+  font-family: "MonoCode Slider Mono", var(--font-mono);
+}
+
+.model-slider-effort {
+  font-family: "Playfair Display", ui-serif, "New York", Georgia, serif;
+}
+
+.model-slider-track {
+  --knob-x: 0px;
+  background-color: var(--slider-rail);
+  cursor: grab;
+  outline-style: solid;
+}
+
+.model-slider-track[data-dragging] {
+  cursor: grabbing;
+}
+
+/* The ring shows once the keyboard drives the slider; opening it with the
+   mouse focuses the rail without one, as in the design. */
+.model-slider-track[data-focus-ring]:focus-visible {
+  outline-color: color-mix(in srgb, var(--color-content) 40%, transparent);
+}
+
+.model-slider-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: calc(var(--knob-x) + 18px);
+  border-radius: 10px;
+  background: var(--slider-fill);
+  /* A gradient spans the whole rail, so a wider fill reveals more of it. */
+  background-size: 342px 100%;
+  outline: 1px solid color-mix(in srgb, var(--color-content) 40%, transparent);
+  outline-offset: -2px;
+  transition:
+    width 180ms var(--motion-ease-out),
+    background-color 200ms var(--motion-ease-out);
+}
+
+.model-slider-dot {
+  position: absolute;
+  top: 10px;
+  z-index: 1;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: color-mix(in srgb, var(--color-content) 10%, transparent);
+  pointer-events: none;
+}
+
+.model-slider-dot[data-active] {
+  top: 9px;
+  background-color: var(--slider-accent-soft);
+}
+
+.model-slider-knob {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  z-index: 3;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background-color: var(--color-background-base);
+  outline: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  outline-offset: -2px;
+  transform: translateX(var(--knob-x));
+  transition: transform 180ms var(--motion-ease-out);
+  will-change: transform;
+  pointer-events: none;
+}
+
+.model-slider-track[data-focus-ring]:focus-visible .model-slider-knob {
+  outline-color: color-mix(in srgb, var(--color-content) 40%, transparent);
+}
+
+.model-slider-track[data-empty] .model-slider-knob,
+.model-slider-track[data-empty] .model-slider-fill {
+  opacity: 0;
+}
+
+/* While dragging, the knob and fill follow the pointer exactly. */
+.model-slider-track[data-dragging] .model-slider-knob,
+.model-slider-track[data-dragging] .model-slider-fill {
+  transition: none;
+}
+
+.model-slider-tiles-clip {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  border-radius: 10px;
+  pointer-events: none;
+  contain: paint;
+}
+
+.model-slider-tiles-clip > .model-slider-tiles {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(32, minmax(0, 1fr));
+  grid-template-rows: repeat(5, minmax(0, 1fr));
+  -webkit-mask-image:
+    linear-gradient(
+      to right,
+      transparent,
+      #000 28px,
+      #000 calc(100% - 28px),
+      transparent
+    ),
+    linear-gradient(to bottom, transparent, #000 35%, #000 65%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(
+      to right,
+      transparent,
+      #000 28px,
+      #000 calc(100% - 28px),
+      transparent
+    ),
+    linear-gradient(to bottom, transparent, #000 35%, #000 65%, transparent);
+  mask-composite: intersect;
+  animation: codex-effort-tiles-clear 5000ms linear 1 both;
+}
+
+/* Ultrathink runs the rainbow across the rail, one hue per column. */
+.model-slider[data-effort-tone="ultrathink"] .codex-effort-tile {
+  --codex-effort-color: hsl(calc(var(--tile-column) * 11.25deg) 90% 66%);
+}
+
+.model-slider-tiles .codex-effort-tile--filled {
+  animation: codex-effort-tile-fill 1400ms ease-out 3 both;
+  animation-delay: calc(var(--tile-distance) * 420ms);
+}
+
+.model-slider-ripple {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: 10px;
+  pointer-events: none;
+  opacity: 0;
+  animation: codex-effort-edge-ripple 5000ms ease-in-out 1 both;
+}
+
+.model-slider[data-effort-tone="ultrathink"] .model-slider-ripple {
+  --codex-effort-color: #c084fc;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-slider-label,
+  .model-slider-globe,
+  .model-slider-fill,
+  .model-slider-knob {
+    transition: none;
+  }
+
+  .model-slider-tiles-clip > .model-slider-tiles {
+    animation: none;
+    opacity: 0.72;
+  }
+
+  .model-slider-tiles .codex-effort-tile--filled {
+    animation: none;
+    background-color: var(--codex-effort-color);
+  }
+
+  .model-slider-ripple {
+    animation: none;
+    opacity: 0.42;
+    box-shadow: inset 0 0 12px 1px
+      color-mix(in srgb, var(--codex-effort-color) 55%, transparent);
+  }
+}

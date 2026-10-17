@@ -48,7 +48,23 @@ import { HARNESSES, HARNESS_TITLE, type HarnessId } from "../model/session";
 import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
 import { LAYER } from "../../../shared/lib/layers";
 import { HarnessIcon } from "./HarnessIcon";
-import { Popover } from "../../../shared/ui/Popover";
+import { EffortTileShimmer } from "./EffortTileShimmer";
+import { ModelPresetSlider } from "./ModelPresetSlider";
+import {
+  currentStepIndex,
+  effortTone,
+  presetStepSettings,
+  resolvePresetSteps,
+  shortModelName,
+  type PresetStep,
+} from "../model/modelPresetSteps";
+import {
+  loadModelPresets,
+  loadModelSliderHaptics,
+  subscribeModelPresets,
+  subscribeModelSliderHaptics,
+} from "../../settings/model/modelPresets";
+import { Popover, type PopoverAnchor } from "../../../shared/ui/Popover";
 import { RollText } from "../../../shared/ui/RollText";
 import { MOD } from "../../../platform/tauri/platform";
 import { keybindingPressed } from "../../settings/model/settings";
@@ -70,9 +86,20 @@ type Props = {
   /**
    * `plain` drops the pill for rows like a details panel's property list;
    * `text` is just the provider and name, for a quiet row beneath a chat
-   * input.
+   * input; `ghost` is the pill without its fill, for the new-session
+   * composer.
    */
   variant?: Variant;
+  /**
+   * Click opens the preset slider, centered on `anchor`, instead of the menu.
+   * The menu stays one click away from the slider's label, and is used
+   * directly while fewer than two presets can run here.
+   */
+  presetPanel?: {
+    anchor: PopoverAnchor;
+    side: "top" | "bottom";
+    gap?: number;
+  };
   /** Action label for recovery surfaces that open the same model chooser. */
   triggerLabel?: string;
   /**
@@ -85,7 +112,7 @@ type Props = {
   onClose?: () => void;
 };
 
-type Variant = "pill" | "plain" | "text";
+type Variant = "pill" | "plain" | "text" | "ghost";
 
 type MenuEntry = { kind: "setting"; setting: ModelSetting } | { kind: "model" };
 
@@ -103,7 +130,10 @@ const MENU_WIDTH = 250;
 const MODEL_MENU_WIDTH = 310;
 const SETTING_MENU_WIDTH = 210;
 const SUBMENU_OVERLAP = -4;
+/** The slider panel: its 342px rail plus 12px padding each side. */
+const PRESET_PANEL_WIDTH = 366;
 const SELF = "[data-model-picker]";
+const TRIGGER = "[data-model-picker-trigger]";
 
 const PROVIDER_TAB_SIZE = 32;
 const PROVIDER_TAB_GAP = 4;
@@ -157,37 +187,6 @@ function effortTileTone(
     : normalized === "max"
       ? "max"
       : undefined;
-}
-
-const EFFORT_TILE_COLUMNS = 32;
-const EFFORT_TILE_ROWS = 5;
-
-function EffortTileShimmer() {
-  return (
-    <span className="codex-effort-tiles" aria-hidden="true">
-      {Array.from(
-        { length: EFFORT_TILE_COLUMNS * EFFORT_TILE_ROWS },
-        (_, index) => {
-          const column = index % EFFORT_TILE_COLUMNS;
-          const row = Math.floor(index / EFFORT_TILE_COLUMNS);
-          const centerColumn = (EFFORT_TILE_COLUMNS - 1) / 2;
-          const centerRow = (EFFORT_TILE_ROWS - 1) / 2;
-          const distance = Math.hypot(
-            (column - centerColumn) / centerColumn,
-            (row - centerRow) / centerRow,
-          );
-          const filled = (index * 73 + index * index * 19 + 23) % 101 < 65;
-          return (
-            <span
-              key={index}
-              className={`codex-effort-tile${filled ? " codex-effort-tile--filled" : ""}`}
-              style={{ "--tile-distance": distance } as React.CSSProperties}
-            />
-          );
-        },
-      )}
-    </span>
-  );
 }
 
 function effortSetting(model: AgentModel): ModelSetting | undefined {
@@ -321,11 +320,22 @@ export function ModelPicker({
   variant = "pill",
   triggerLabel,
   labelClassName = "",
+  presetPanel,
   onChange,
   onSettingsChange,
   onClose,
 }: Props) {
   const source = useModelSource();
+  const presets = useSyncExternalStore(
+    subscribeModelPresets,
+    loadModelPresets,
+    loadModelPresets,
+  );
+  const sliderHaptics = useSyncExternalStore(
+    subscribeModelSliderHaptics,
+    loadModelSliderHaptics,
+    loadModelSliderHaptics,
+  );
   const catalogVersion = useSyncExternalStore(
     subscribeModels,
     getModelSnapshot,
@@ -347,6 +357,8 @@ export function ModelPicker({
     projectProvidersRevision,
   );
   const [open, setOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelByKeyboard, setPanelByKeyboard] = useState(false);
   const [tab, setTab] = useState<ModelPickerTab>(harness);
   const [active, setActive] = useState(0);
   const [activeModel, setActiveModel] = useState(0);
@@ -362,11 +374,13 @@ export function ModelPicker({
   const search = useRef<HTMLInputElement>(null);
   const onCloseRef = useRef(onClose);
   const openRef = useRef(open);
+  const panelOpenRef = useRef(panelOpen);
   const recentOpenRef = useRef(recentMenu != null);
   const currentRef = useRef<AgentModel | null>(null);
   const lastHotkey = useRef(0);
   onCloseRef.current = onClose;
   openRef.current = open;
+  panelOpenRef.current = panelOpen;
   recentOpenRef.current = recentMenu != null;
 
   const current = source.resolve(harness, model);
@@ -394,10 +408,7 @@ export function ModelPicker({
   const triggerEffortLabel = triggerEffortSetting
     ? settingValueLabel(triggerEffortSetting, values)
     : undefined;
-  const triggerModelName =
-    current.harness === "claude"
-      ? current.name.replace(/^Claude /, "")
-      : current.name;
+  const triggerModelName = shortModelName(current);
   const triggerTitle = [
     HARNESS_TITLE[current.harness],
     current.provider?.name,
@@ -425,6 +436,19 @@ export function ModelPicker({
     project,
   ]);
   const providerKey = pickerHarnesses.join(",");
+  const presetSteps = useMemo<PresetStep[]>(() => {
+    void catalogVersion;
+    if (!presetPanel) return [];
+    return resolvePresetSteps(presets, source, (id) =>
+      pickerHarnesses.includes(id),
+    );
+  }, [presetPanel != null, presets, source, catalogVersion, providerKey]);
+  const sliderReady = presetSteps.length >= 2;
+  const panelVisible = panelOpen && sliderReady && presetPanel != null;
+  const currentEffortSetting = effortSetting(current);
+  const currentEffortValue = currentEffortSetting
+    ? settingValue(currentEffortSetting, values)
+    : undefined;
   const visibleTab = coerceModelPickerTab(tab, (id) =>
     pickerHarnesses.includes(id),
   );
@@ -453,17 +477,41 @@ export function ModelPicker({
 
   const dismiss = (restore: boolean) => {
     setOpen(false);
+    setPanelOpen(false);
     setRecentMenu(null);
     setSubmenu(null);
     if (restore) onCloseRef.current?.();
   };
 
-  const togglePicker = () => {
-    if (openRef.current) dismiss(true);
-    else {
+  const togglePicker = (byKeyboard = false) => {
+    if (openRef.current || panelOpenRef.current) dismiss(true);
+    else if (sliderReady && presetPanel) {
+      setRecentMenu(null);
+      setPanelByKeyboard(byKeyboard);
+      setPanelOpen(true);
+    } else {
       setRecentMenu(null);
       setOpen(true);
     }
+  };
+
+  const openFullMenu = () => {
+    setPanelOpen(false);
+    setOpen(true);
+  };
+
+  const applyStep = (step: PresetStep) => {
+    if (!source.available(step.model.harness)) return;
+    const next = presetStepSettings(step, values);
+    if (
+      step.model.harness !== current.harness ||
+      step.model.id !== current.id
+    ) {
+      onChange(step.model.harness, step.model.id);
+    }
+    // Sent after the model so it lands on top of the settings the model
+    // change carried over.
+    onSettingsChange(next);
   };
 
   const openRecentMenu = () => {
@@ -472,6 +520,7 @@ export function ModelPicker({
     const models = recentMenuModels(selected, source);
     const selectedIndex = models.findIndex((item) => item.id === selected.id);
     setOpen(false);
+    setPanelOpen(false);
     setSubmenu(null);
     setRecentActive(selectedIndex >= 0 ? selectedIndex : 0);
     setRecentMenu({ models });
@@ -725,6 +774,8 @@ export function ModelPicker({
     setSetting(entry.setting, value === "true" ? "false" : "true");
   };
 
+  const pillSized = variant === "pill" || variant === "ghost";
+
   const showSubmenu =
     open &&
     submenu != null &&
@@ -750,41 +801,53 @@ export function ModelPicker({
           }`
         }
         aria-keyshortcuts={`${MOD}.`}
-        aria-expanded={open || recentMenu != null}
-        aria-haspopup={hideSettings ? "dialog" : "menu"}
+        aria-expanded={open || panelVisible || recentMenu != null}
+        aria-haspopup={
+          hideSettings || (presetPanel && sliderReady) ? "dialog" : "menu"
+        }
+        data-model-picker-trigger
         onMouseDown={(event) => event.preventDefault()}
         onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
           openRecentMenu();
         }}
-        onClick={() => togglePicker()}
+        // A click with no pointer behind it (`detail` 0) came from the keyboard.
+        onClick={(event) => togglePicker(event.detail === 0)}
         className={
           variant === "text"
             ? textControlClass(open, "shrink-0 gap-1.5")
-            : variant === "plain"
-              ? `-mx-1.5 flex h-7 shrink-0 items-center gap-2 rounded-md px-1.5 text-[12px] text-content/85 ${
-                  open ? "bg-content/8" : "hover:bg-content/6"
+            : variant === "ghost"
+              ? `flex h-6.5 shrink-0 items-center gap-1 rounded-md px-1.5 text-content ${
+                  open || panelVisible ? "bg-selection" : "hover:bg-selection"
                 }`
-              : `flex h-6.5 shrink-0 items-center gap-1 rounded-md px-1.5 ${
-                  open
-                    ? "bg-selection text-content"
-                    : "bg-selection text-content hover:bg-selection-hover"
-                }`
+              : variant === "plain"
+                ? `-mx-1.5 flex h-7 shrink-0 items-center gap-2 rounded-md px-1.5 text-[12px] text-content/85 ${
+                    open ? "bg-content/8" : "hover:bg-content/6"
+                  }`
+                : `flex h-6.5 shrink-0 items-center gap-1 rounded-md px-1.5 ${
+                    open
+                      ? "bg-selection text-content"
+                      : "bg-selection text-content hover:bg-selection-hover"
+                  }`
         }
       >
         <HarnessIcon
           harness={current.harness}
-          className={`${variant === "pill" ? "size-4" : "size-3.5"} shrink-0`}
+          className={`${pillSized ? "size-4" : "size-3.5"} shrink-0`}
         />
         <RollText
           text={triggerLabel ?? triggerModelName}
-          className={`whitespace-nowrap ${variant === "pill" ? "text-[11px]" : ""} ${labelClassName}`}
+          className={`whitespace-nowrap ${pillSized ? "text-[11px]" : ""} ${
+            variant === "ghost" ? "font-semibold" : ""
+          } ${labelClassName}`}
         />
         {!triggerLabel && triggerEffortLabel ? (
           <RollText
             text={triggerEffortLabel}
-            className={`shrink-0 text-content/50 ${variant === "pill" ? "text-[11px]" : ""} ${labelClassName}`}
+            className={`shrink-0 text-content/50 ${pillSized ? "text-[11px]" : ""} ${
+              variant === "ghost" ? "italic" : ""
+            } ${labelClassName}`}
           />
         ) : null}
         {variant === "text" ? null : (
@@ -794,6 +857,42 @@ export function ModelPicker({
           />
         )}
       </button>
+
+      {panelVisible ? (
+        <Popover
+          anchor={presetPanel.anchor}
+          side={presetPanel.side}
+          align="center"
+          gap={presetPanel.gap}
+          width={PRESET_PANEL_WIDTH}
+          bare
+          ignore={`${SELF}, ${TRIGGER}`}
+          onDismiss={(reason) => dismiss(reason === "escape")}
+          role="dialog"
+          aria-label="Model presets"
+          data-model-picker
+        >
+          <ModelPresetSlider
+            steps={presetSteps}
+            index={currentStepIndex(presetSteps, current, values)}
+            modelLabel={triggerModelName}
+            effortLabel={
+              currentEffortSetting
+                ? settingValueLabel(currentEffortSetting, values)
+                : undefined
+            }
+            tone={effortTone(currentEffortValue)}
+            haptics={sliderHaptics}
+            keyboard={panelByKeyboard}
+            onCommit={(index) => {
+              const step = presetSteps[index];
+              if (step) applyStep(step);
+            }}
+            onOpenModels={openFullMenu}
+            onDone={() => dismiss(true)}
+          />
+        </Popover>
+      ) : null}
 
       {open && hideSettings ? (
         <ModelFlyout
