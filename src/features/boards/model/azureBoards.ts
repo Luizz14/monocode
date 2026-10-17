@@ -213,9 +213,8 @@ export function clearAzureBoardsCache() {
   areaInflight.clear();
 }
 
-// Pipelines lists the same projects; both views share its host command.
 export function listAzureProjects(): Promise<AzureNamedRef[]> {
-  return invoke<AzureNamedRef[]>("azure_pipelines_projects");
+  return invoke<AzureNamedRef[]>("azure_devops_projects");
 }
 
 export function listAzureTeams(project: string): Promise<AzureNamedRef[]> {

@@ -29,6 +29,13 @@ pub struct AzureDevOpsStatus {
     pub organization: String,
 }
 
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureDevOpsProject {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct AzureDevOpsConfig {
     pub(crate) url: String,
@@ -178,6 +185,21 @@ pub async fn azure_devops_repo(app: AppHandle, cwd: String) -> Result<String, St
     tauri::async_runtime::spawn_blocking(move || {
         let config = require_config(&app)?;
         azure_devops_repo_for(&expand_home(&cwd), &config.url)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// The organization's projects, for the Boards and Pipelines project pickers.
+#[tauri::command]
+pub async fn azure_devops_projects(app: AppHandle) -> Result<Vec<AzureDevOpsProject>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = require_config(&app)?;
+        let response = azure_get(
+            &config,
+            &format!("/_apis/projects?$top=500&api-version={API_VERSION}"),
+        )?;
+        Ok(parse_projects(&response.value))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -732,6 +754,23 @@ fn wit_batch_path(ids: &[i64]) -> String {
 }
 
 // ---- Parsing ----
+
+fn parse_projects(value: &Value) -> Vec<AzureDevOpsProject> {
+    let mut projects: Vec<AzureDevOpsProject> = value
+        .get("value")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|row| {
+            let id = string_field(row, "id").filter(|id| !id.is_empty())?;
+            let name = string_field(row, "name").filter(|name| !name.is_empty())?;
+            Some(AzureDevOpsProject { id, name })
+        })
+        .collect();
+    projects.sort_by_key(|project| project.name.to_lowercase());
+    projects
+}
 
 fn parse_pr_list(
     value: &Value,
@@ -2550,5 +2589,23 @@ mod tests {
         assert_eq!(percent_decode("my%20project"), "my project");
         // Malformed sequences pass through untouched.
         assert_eq!(percent_decode("100%"), "100%");
+    }
+
+    #[test]
+    fn parses_projects_sorted_and_skips_incomplete_rows() {
+        let projects = parse_projects(&json!({ "value": [
+            { "id": "2", "name": "Mobile Desty" },
+            { "id": "1", "name": "Mobile Banese" },
+            { "id": "", "name": "No id" },
+            { "id": "3", "name": "" }
+        ]}));
+        assert_eq!(
+            projects
+                .iter()
+                .map(|project| project.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Mobile Banese", "Mobile Desty"]
+        );
+        assert!(parse_projects(&json!({})).is_empty());
     }
 }

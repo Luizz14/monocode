@@ -24,13 +24,6 @@ const MAX_FILE_BYTES: usize = 256 * 1024;
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct AzurePipelinesProject {
-    pub id: String,
-    pub name: String,
-}
-
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct AzurePipelineRun {
     pub id: i64,
     pub number: String,
@@ -135,22 +128,6 @@ pub struct AzureRunTitles {
 }
 
 // ---- Commands ----
-
-#[tauri::command]
-pub async fn azure_pipelines_projects(
-    app: AppHandle,
-) -> Result<Vec<AzurePipelinesProject>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let config = require_config(&app)?;
-        let response = azure_get(
-            &config,
-            &format!("/_apis/projects?$top=500&api-version={API_VERSION}"),
-        )?;
-        Ok(parse_projects(&response.value))
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
 
 #[tauri::command]
 pub async fn azure_pipelines_list(
@@ -538,19 +515,6 @@ fn fetch_pull_request_title(
 
 // ---- Parsing ----
 
-fn parse_projects(value: &Value) -> Vec<AzurePipelinesProject> {
-    let mut projects: Vec<AzurePipelinesProject> = rows(value)
-        .iter()
-        .filter_map(|row| {
-            let id = string_field(row, "id").filter(|id| !id.is_empty())?;
-            let name = string_field(row, "name").filter(|name| !name.is_empty())?;
-            Some(AzurePipelinesProject { id, name })
-        })
-        .collect();
-    projects.sort_by_key(|project| project.name.to_lowercase());
-    projects
-}
-
 fn parse_pipelines(value: &Value) -> Vec<AzurePipeline> {
     rows(value).iter().filter_map(parse_pipeline).collect()
 }
@@ -909,19 +873,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_projects_and_branches_sorted() {
-        let projects = parse_projects(&json!({ "value": [
-            { "id": "2", "name": "Mobile Desty" },
-            { "id": "1", "name": "Mobile Banese" },
-            { "id": "", "name": "No id" }
-        ]}));
-        assert_eq!(
-            projects
-                .iter()
-                .map(|project| project.name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["Mobile Banese", "Mobile Desty"]
-        );
+    fn parses_branches_sorted() {
         let branches = parse_branches(&json!({ "value": [
             { "name": "refs/heads/main" },
             { "name": "refs/heads/feature/US1/x" },

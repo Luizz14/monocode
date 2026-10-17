@@ -106,7 +106,7 @@ beforeEach(() => {
     switch (command) {
       case "azure_devops_status":
         return { connected: true, url: ORG, organization: ORG.toLowerCase() };
-      case "azure_pipelines_projects":
+      case "azure_devops_projects":
         return [
           { id: "d", name: "Mobile Desty" },
           { id: "b", name: "Mobile Banese" },

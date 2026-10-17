@@ -78,7 +78,7 @@ export function clearAzurePipelinesCache() {
 }
 
 export function listAzurePipelinesProjects(): Promise<AzurePipelinesProject[]> {
-  return invoke<AzurePipelinesProject[]>("azure_pipelines_projects");
+  return invoke<AzurePipelinesProject[]>("azure_devops_projects");
 }
 
 export function peekAzurePipelines(project: string): AzurePipeline[] | null {
