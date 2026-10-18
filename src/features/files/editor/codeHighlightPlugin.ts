@@ -1,297 +1,220 @@
 import type {
   CodeHighlighterPlugin,
+  HighlightOptions,
   HighlightResult,
   ThemeInput,
 } from "@streamdown/code";
+import { bundledLanguagesInfo } from "shiki/langs";
 import type { BundledLanguage } from "shiki";
-import type {
-  HighlightRequest,
-  HighlightWorkerReply,
-  HighlightWorkerRequest,
-  TokenLines,
-} from "./highlightEngine";
-import {
-  SHIKI_LANGUAGE_IDS,
-  normalizeLanguage,
-  supportsLanguage,
-} from "./shikiLanguages";
+export {
+  createBoundedCodePlugin,
+  type BoundedCodePlugin,
+} from "./codeHighlightEngine";
 
-/**
- * `@streamdown/code` keeps every token result in a module-level Map that is
- * never evicted. Streamdown highlights a fence again on every streamed update,
- * so each partial version of every code block an agent wrote stayed in memory
- * for the life of the window. Its key (length plus the first and last 100
- * characters) also let different blocks share a result. This keeps the same
- * `CodeHighlighterPlugin` shape with a bounded LRU and an exact key.
- *
- * Tokenizing happens in a worker (`highlightEngine.ts` explains why). The
- * worker answers in request order and sends back only the lines after the
- * ones this side already holds from the previous answer, so a streaming fence
- * keeps its complete lines' token arrays, and `HighlightedLine` keeps their
- * elements. A worker that cannot start or crashes leaves fences as plain
- * text: shipping the engine for this thread as well would double the grammar
- * chunks on disk for a case module workers should never reach.
- *
- * Mounted blocks hold their tokens in component state, so eviction only means
- * a remounted block briefly shows plain text while it is highlighted again.
- */
-const DEFAULT_THEMES: [ThemeInput, ThemeInput] = ["github-light", "github-dark"];
-const MAX_ENTRIES = 100;
-const MAX_CACHED_CHARS = 500_000;
+type Callback = (result: HighlightResult) => void;
+type Job = {
+  id: number;
+  key: string;
+  options: HighlightOptions;
+  callbacks: Set<Callback>;
+  priority: number;
+};
+const languages = new Set(bundledLanguagesInfo.map((language) => language.id));
+const aliases = new Map(
+  bundledLanguagesInfo.flatMap((language) =>
+    (language.aliases ?? []).map((alias) => [alias, language.id] as const),
+  ),
+);
+const normalize = (language: string) =>
+  aliases.get(language.trim().toLowerCase()) ?? language.trim().toLowerCase();
+const MAX_CHARS = 500_000;
+const MAX_RESULTS = 100;
+const THEMES: [ThemeInput, ThemeInput] = ["light-plus", "dark-plus"];
+const results = new Map<string, HighlightResult>();
+const jobs = new Map<string, Job>();
+let chars = 0;
+let sequence = 0;
+let active: Job | undefined;
+let worker: Worker | undefined;
+let cancellationScheduled = false;
+
+function remember(key: string, result: HighlightResult) {
+  if (key.length > MAX_CHARS) return;
+  if (results.delete(key)) chars -= key.length;
+  results.set(key, result);
+  chars += key.length;
+  while (results.size > MAX_RESULTS || chars > MAX_CHARS) {
+    const oldest = results.keys().next().value!;
+    chars -= oldest.length;
+    results.delete(oldest);
+  }
+}
+
+function pump() {
+  if (active || !jobs.size || typeof Worker === "undefined") return;
+  const next = [...jobs.values()]
+    .filter((job) => job.callbacks.size)
+    .sort((a, b) => a.priority - b.priority || a.id - b.id)[0];
+  if (!next) return;
+  try {
+    if (!worker) {
+      worker = new Worker(
+        new URL("./codeHighlight.worker.ts", import.meta.url),
+        { type: "module" },
+      );
+      worker.onmessage = ({
+        data,
+      }: MessageEvent<{
+        id: number;
+        result?: HighlightResult;
+        error?: string;
+      }>) => {
+        const job = active;
+        if (!job || data.id !== job.id) return;
+        active = undefined;
+        jobs.delete(job.key);
+        if (data.result && job.callbacks.size) {
+          remember(job.key, data.result);
+          for (const callback of job.callbacks) callback(data.result);
+        }
+        pump();
+      };
+      const currentWorker = worker;
+      worker.onerror = () => {
+        if (worker !== currentWorker) return;
+        worker?.terminate();
+        worker = undefined;
+        active = undefined;
+        jobs.clear();
+      };
+    }
+    active = next;
+    worker.postMessage({ id: next.id, options: next.options });
+  } catch {
+    worker?.terminate();
+    worker = undefined;
+    active = undefined;
+    jobs.clear();
+  }
+}
+
+function keyFor(options: HighlightOptions) {
+  return `${normalize(options.language)}\0${JSON.stringify(options.themes)}\0${options.code}`;
+}
+
+function cancelAbandonedWork() {
+  if (cancellationScheduled || !active || active.callbacks.size) return;
+  cancellationScheduled = true;
+  // React removes the old subscription before subscribing to a growing fence.
+  // Let that replacement arrive before deciding whether to discard the worker's
+  // grammar checkpoint; otherwise every streamed chunk restarts the tokenizer.
+  queueMicrotask(() => {
+    cancellationScheduled = false;
+    const abandoned = active;
+    if (!abandoned || abandoned.callbacks.size) return;
+    const continued = [...jobs.values()].some(
+      (job) =>
+        job !== abandoned &&
+        job.callbacks.size > 0 &&
+        normalize(job.options.language) ===
+          normalize(abandoned.options.language) &&
+        JSON.stringify(job.options.themes) ===
+          JSON.stringify(abandoned.options.themes) &&
+        job.options.code.startsWith(abandoned.options.code),
+    );
+    if (continued) return;
+    worker?.terminate();
+    worker = undefined;
+    active = undefined;
+    jobs.delete(abandoned.key);
+    pump();
+  });
+}
+
+/** Cancel obsolete fences; at most one tokenizer runs, off the UI thread. */
+export function requestCodeHighlight(
+  options: HighlightOptions,
+  callback: Callback,
+  priority = 0,
+): () => void {
+  const key = keyFor(options);
+  const cached = results.get(key);
+  if (cached) {
+    results.delete(key);
+    results.set(key, cached);
+    callback(cached);
+    return () => {};
+  }
+  if (typeof Worker === "undefined") return () => {};
+  let job = jobs.get(key);
+  if (!job) {
+    job = { id: ++sequence, key, options, callbacks: new Set(), priority };
+    jobs.set(key, job);
+  }
+  job.priority = Math.min(job.priority, priority);
+  job.callbacks.add(callback);
+  pump();
+  return () => {
+    job.callbacks.delete(callback);
+    if (!job.callbacks.size && active !== job) jobs.delete(key);
+    cancelAbandonedWork();
+  };
+}
+
+export const boundedCode: CodeHighlighterPlugin = {
+  name: "shiki",
+  type: "code-highlighter",
+  supportsLanguage: (language) => languages.has(normalize(language)),
+  getSupportedLanguages: () => [...languages] as BundledLanguage[],
+  getThemes: () => THEMES,
+  highlight(options, callback) {
+    const cached = results.get(keyFor(options));
+    if (cached) return cached;
+    if (callback) requestCodeHighlight(options, callback);
+    return null;
+  },
+};
+
 /** Compiled after boot. Plain-text fences highlight as JavaScript. */
 export const WARM_LANGUAGES: readonly string[] = [
   "javascript",
   "typescript",
   "tsx",
 ];
-
-type HighlightCallback = (result: HighlightResult) => void;
-
-export type HighlightBackend = {
-  /** Replies arrive in request order. */
-  send(message: HighlightWorkerRequest): Promise<HighlightWorkerReply>;
-  /** True when tokenizing never blocks the caller's thread. */
-  offThread: boolean;
-};
-
-export type BoundedCodePlugin = CodeHighlighterPlugin & {
-  /** Number of token results currently cached. */
-  cachedResults(): number;
-  /**
-   * Compiles grammars before their first fence, off the window's thread.
-   * Resolves at once when highlighting runs on this thread.
-   */
-  warmUp(languages?: readonly string[]): Promise<void>;
-};
-
-/** Leaves code uncolored: one token per line, in the surrounding text color. */
-export function createPlainBackend(): HighlightBackend {
-  return {
-    send: (message) => {
-      if ("warm" in message) {
-        return Promise.resolve({ id: message.id, result: undefined });
-      }
-      const lines: TokenLines = [];
-      let offset = 0;
-      for (const line of message.request.code.split("\n")) {
-        lines.push([{ content: line, offset }]);
-        offset += line.length + 1;
-      }
-      return Promise.resolve({
-        id: message.id,
-        result: { reusedLines: 0, lines },
-      });
-    },
-    offThread: false,
-  };
-}
+/** After history (1), so a fence on screen never waits behind the warm-up. */
+const WARM_PRIORITY = 2;
+const WARM_SNIPPET = [
+  'import { readFile } from "node:fs/promises";',
+  "export async function main(path: string): Promise<number> {",
+  "  const text = await readFile(path, { encoding: 'utf8' });",
+  "  // Count the lines that are not empty.",
+  "  return text.split(/\\r?\\n/).filter((line) => line.trim() !== '').length;",
+  "}",
+].join("\n");
 
 /**
- * Tokenizes in a worker. A worker that cannot start or crashes hands its
- * unanswered requests, in order, to the plain backend, which answers from
- * then on.
+ * Compiles the common grammars in the worker after boot. The first
+ * tokenization of a grammar compiles its scanners, about a second for
+ * TypeScript, so without this the first fence of a window waits that long
+ * for its colors. Resolves once every language is compiled; if the worker
+ * fails it stays pending, and the idle preloader does not wait on it.
  */
-export function createWorkerBackend(
-  createWorker: () => Worker,
-): HighlightBackend {
-  const pending = new Map<
-    number,
-    { message: HighlightWorkerRequest; resolve: (reply: HighlightWorkerReply) => void }
-  >();
-  let worker: Worker | null = null;
-  let fallback: HighlightBackend | null = null;
-
-  const failOver = (reason: unknown) => {
-    if (fallback) return;
-    console.error(
-      "[Code highlight] The highlight worker failed; code stays uncolored.",
-      reason,
-    );
-    worker?.terminate();
-    worker = null;
-    const plain = createPlainBackend();
-    fallback = plain;
-    const waiting = [...pending.values()];
-    pending.clear();
-    for (const { message, resolve } of waiting) {
-      void plain.send(message).then(resolve);
-    }
-  };
-
-  const start = (): Worker | null => {
-    try {
-      const created = createWorker();
-      created.onmessage = ({ data }: MessageEvent<HighlightWorkerReply>) => {
-        const entry = pending.get(data.id);
-        if (!entry) return;
-        pending.delete(data.id);
-        entry.resolve(data);
-      };
-      created.onerror = (event) => {
-        failOver(
-          typeof event === "object" && event && "message" in event
-            ? event.message
-            : event,
-        );
-      };
-      created.onmessageerror = (event) => failOver(event);
-      return created;
-    } catch (error) {
-      failOver(error);
-      return null;
-    }
-  };
-
-  return {
-    send(message) {
-      if (!fallback) worker ??= start();
-      if (fallback) return fallback.send(message);
-      return new Promise((resolve) => {
-        pending.set(message.id, { message, resolve });
-        worker!.postMessage(message);
-      });
-    },
-    offThread: true,
-  };
-}
-
-function defaultBackend(): HighlightBackend {
-  if (import.meta.env.MODE === "test") {
-    // Dead in the window's build, which keeps the engine out of it.
-    const inline = import("./highlightInlineBackend").then((mod) =>
-      mod.createInlineBackend(),
-    );
-    return {
-      send: (message) => inline.then((backend) => backend.send(message)),
-      offThread: false,
-    };
-  }
-  if (typeof Worker !== "function") return createPlainBackend();
-  return createWorkerBackend(
-    () =>
-      new Worker(new URL("./codeHighlight.worker.ts", import.meta.url), {
-        type: "module",
-      }),
-  );
-}
-
-function themeName(theme: ThemeInput): string {
-  return typeof theme === "string" ? theme : (theme.name ?? "custom");
-}
-
-export function createBoundedCodePlugin(
-  options: {
-    themes?: [ThemeInput, ThemeInput];
-    maxEntries?: number;
-    maxChars?: number;
-    backend?: HighlightBackend;
-  } = {},
-): BoundedCodePlugin {
-  const themes = options.themes ?? DEFAULT_THEMES;
-  const maxEntries = options.maxEntries ?? MAX_ENTRIES;
-  const maxChars = options.maxChars ?? MAX_CACHED_CHARS;
-  const backend = options.backend ?? defaultBackend();
-  const results = new Map<string, HighlightResult>();
-  const pending = new Map<string, Set<HighlightCallback>>();
-  let cachedChars = 0;
-  let nextId = 0;
-  // The lines of the latest reply. The engine's checkpoint describes this
-  // same fence, so a reply may say to keep a prefix of these lines.
-  let lastLines: TokenLines = [];
-
-  const remember = (key: string, result: HighlightResult) => {
-    if (results.delete(key)) cachedChars -= key.length;
-    // A block larger than the whole budget is delivered but never cached.
-    if (key.length > maxChars) return;
-    results.set(key, result);
-    cachedChars += key.length;
-    while (results.size > maxEntries || cachedChars > maxChars) {
-      const oldest = results.keys().next().value;
-      if (oldest === undefined) break;
-      results.delete(oldest);
-      cachedChars -= oldest.length;
-    }
-  };
-
-  return {
-    name: "shiki",
-    type: "code-highlighter",
-    supportsLanguage: (language) => supportsLanguage(language),
-    getSupportedLanguages: () => [...SHIKI_LANGUAGE_IDS] as BundledLanguage[],
-    getThemes: () => themes,
-    cachedResults: () => results.size,
-    warmUp: (languages = WARM_LANGUAGES) => {
-      if (!backend.offThread) return Promise.resolve();
-      return backend
-        .send({ id: ++nextId, warm: languages })
-        .then((reply) => {
-          if ("error" in reply) throw new Error(reply.error);
-        })
-        .catch((error: unknown) => {
-          console.error("[Code highlight] Failed to warm grammars:", error);
-        });
-    },
-    highlight({ code, language, themes: pair }, callback) {
-      const lang = normalizeLanguage(language);
-      const names = [themeName(pair[0]), themeName(pair[1])] as const;
-      const key = `${lang}\u0000${names[0]}\u0000${names[1]}\u0000${code}`;
-      const cached = results.get(key);
-      if (cached) {
-        // Refresh recency so blocks still on screen are evicted last.
-        results.delete(key);
-        results.set(key, cached);
-        return cached;
-      }
-      const waiting = pending.get(key);
-      if (waiting) {
-        if (callback) waiting.add(callback);
-        return null;
-      }
-      pending.set(key, new Set(callback ? [callback] : []));
-      const request: HighlightRequest = {
-        code,
-        language: lang,
-        themes: pair,
-        // Complete lines of the last fence; its unfinished last line is not
-        // one of them.
-        reuseLines: Math.max(0, lastLines.length - 1),
-        checkpointLimit: maxChars,
-      };
-      void backend
-        .send({ id: ++nextId, request })
-        .then((reply) => {
-          if ("error" in reply) throw new Error(reply.error);
-          const response = reply.result!;
-          const tokens =
-            response.reusedLines > 0
-              ? [...lastLines.slice(0, response.reusedLines), ...response.lines]
-              : response.lines;
-          lastLines = tokens;
-          const result: HighlightResult = {
-            fg: response.fg,
-            bg: response.bg,
-            themeName: response.themeName,
-            rootStyle: response.rootStyle,
-            tokens,
-          };
-          remember(key, result);
-          const callbacks = pending.get(key);
-          pending.delete(key);
-          callbacks?.forEach((notify) => notify(result));
-        })
-        .catch((error: unknown) => {
-          lastLines = [];
-          pending.delete(key);
-          console.error("[Code highlight] Failed to highlight code:", error);
-        });
-      return null;
-    },
-  };
-}
-
-export const boundedCode = createBoundedCodePlugin();
-
-/** Compiles the common grammars after boot, so the first fence colors at once. */
 export function warmCodeHighlighting(): Promise<void> {
-  return boundedCode.warmUp();
+  if (typeof Worker === "undefined") return Promise.resolve();
+  return Promise.all(
+    WARM_LANGUAGES.map(
+      (language) =>
+        new Promise<void>((resolve) => {
+          requestCodeHighlight(
+            {
+              code: WARM_SNIPPET,
+              language: language as BundledLanguage,
+              themes: THEMES,
+            },
+            () => resolve(),
+            WARM_PRIORITY,
+          );
+        }),
+    ),
+  ).then(() => undefined);
 }

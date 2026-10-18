@@ -20,7 +20,11 @@ function highlight(
 ): Promise<HighlightResult> {
   return new Promise((resolve) => {
     const cached = plugin.highlight(
-      { code, language: language as BundledLanguage, themes: plugin.getThemes() },
+      {
+        code,
+        language: language as BundledLanguage,
+        themes: plugin.getThemes(),
+      },
       resolve,
     );
     if (cached) resolve(cached);
@@ -46,7 +50,10 @@ describe("bounded code highlight plugin", () => {
       expect(result.tokens).toEqual(
         highlighter.codeToTokens("a\r\n\r\nb", {
           lang: "text",
-          themes: { light: "github-light", dark: "github-dark" },
+          themes: {
+            light: "light-plus",
+            dark: "dark-plus",
+          },
         }).tokens,
       );
     } finally {
@@ -117,7 +124,10 @@ describe("bounded code highlight plugin", () => {
           const code = source.slice(0, end);
           const expected = highlighter.codeToTokens(code, {
             lang: language as BundledLanguage,
-            themes: { light: "github-light", dark: "github-dark" },
+            themes: {
+              light: "light-plus",
+              dark: "dark-plus",
+            },
           });
           expect((await highlight(plugin, code, language)).tokens).toEqual(
             expected.tokens,
@@ -132,7 +142,10 @@ describe("bounded code highlight plugin", () => {
           expect((await highlight(plugin, code, language)).tokens).toEqual(
             highlighter.codeToTokens(code, {
               lang: language as BundledLanguage,
-              themes: { light: "github-light", dark: "github-dark" },
+              themes: {
+                light: "light-plus",
+                dark: "dark-plus",
+              },
             }).tokens,
           );
         }
@@ -171,17 +184,18 @@ describe("bounded code highlight plugin", () => {
 
     try {
       const callbacks = [vi.fn(), vi.fn(), vi.fn()];
-      const requests = callbacks.map((callback) =>
-        new Promise<HighlightResult>((resolve) => {
-          const cached = plugin.highlight(
-            { code: source, language: "ts", themes: plugin.getThemes() },
-            (result) => {
-              callback(result);
-              resolve(result);
-            },
-          );
-          expect(cached).toBeNull();
-        }),
+      const requests = callbacks.map(
+        (callback) =>
+          new Promise<HighlightResult>((resolve) => {
+            const cached = plugin.highlight(
+              { code: source, language: "ts", themes: plugin.getThemes() },
+              (result) => {
+                callback(result);
+                resolve(result);
+              },
+            );
+            expect(cached).toBeNull();
+          }),
       );
       const results = await Promise.all(requests);
 
@@ -273,7 +287,11 @@ describe("bounded code highlight plugin", () => {
     expect(text(await highlight(plugin, first))).toBe(first);
     expect(text(await highlight(plugin, second))).toBe(second);
     const again = plugin.highlight(
-      { code: first, language: "ts" as BundledLanguage, themes: plugin.getThemes() },
+      {
+        code: first,
+        language: "ts" as BundledLanguage,
+        themes: plugin.getThemes(),
+      },
       () => undefined,
     );
     expect(again && text(again)).toBe(first);
@@ -283,186 +301,12 @@ describe("bounded code highlight plugin", () => {
     const plugin = createBoundedCodePlugin();
     const colored = await highlight(plugin, "const x = 1;", "typescript");
     const colors = new Set(
-      colored.tokens.flat().map((token) => token.htmlStyle?.color ?? token.color),
+      colored.tokens
+        .flat()
+        .map((token) => token.htmlStyle?.color ?? token.color),
     );
     expect(colors.size).toBeGreaterThan(1);
     const plain = await highlight(plugin, "anything", "not-a-language");
     expect(text(plain)).toBe("anything");
-  }, 20_000);
-});
-
-import {
-  createHighlightEngine,
-  createHighlightWorkerHandler,
-  type HighlightWorkerReply,
-  type HighlightWorkerRequest,
-} from "./highlightEngine";
-import { createWorkerBackend } from "./codeHighlightPlugin";
-import { createInlineBackend } from "./highlightInlineBackend";
-
-/** Runs the real worker handler in this thread, behind the Worker interface. */
-class FakeWorker {
-  onmessage: ((event: MessageEvent<HighlightWorkerReply>) => void) | null =
-    null;
-  onerror: ((event: { message: string }) => void) | null = null;
-  onmessageerror: ((event: MessageEvent) => void) | null = null;
-  terminated = false;
-  received: HighlightWorkerRequest[] = [];
-  private readonly handle = createHighlightWorkerHandler(
-    createHighlightEngine(),
-  );
-
-  constructor(private readonly failOnId?: number) {}
-
-  postMessage(message: HighlightWorkerRequest) {
-    this.received.push(message);
-    if (message.id === this.failOnId) {
-      queueMicrotask(() => this.onerror?.({ message: "worker crashed" }));
-      return;
-    }
-    void this.handle(message).then((reply) => {
-      if (!this.terminated)
-        this.onmessage?.({ data: reply } as MessageEvent<HighlightWorkerReply>);
-    });
-  }
-
-  terminate() {
-    this.terminated = true;
-  }
-}
-
-function workerPlugin(failOnId?: number) {
-  const worker = new FakeWorker(failOnId);
-  const plugin = createBoundedCodePlugin({
-    backend: createWorkerBackend(() => worker as unknown as Worker),
-  });
-  return { plugin, worker };
-}
-
-describe("worker-backed code highlight plugin", () => {
-  it.each([
-    [
-      "typescript",
-      "/* multiline\ncomment */\nconst message = `hello\nworld`;\nconst done = true;",
-    ],
-    ["python", 'text = """first\nsecond\nthird"""\nprint(text)'],
-  ])(
-    "matches full %s highlighting as a fence streams through the worker",
-    async (language, source) => {
-      const { plugin, worker } = workerPlugin();
-      const highlighter = await shiki.createHighlighter({
-        themes: plugin.getThemes(),
-        langs: [language as BundledLanguage],
-        engine: createJavaScriptRegexEngine({ forgiving: true }),
-      });
-      try {
-        for (let end = 1; end <= source.length; end += 3) {
-          const code = source.slice(0, end);
-          expect((await highlight(plugin, code, language)).tokens).toEqual(
-            highlighter.codeToTokens(code, {
-              lang: language as BundledLanguage,
-              themes: { light: "github-light", dark: "github-dark" },
-            }).tokens,
-          );
-        }
-        for (const code of [
-          source.replace("\n", " changed\n"),
-          source.slice(0, 5),
-          source,
-        ]) {
-          expect((await highlight(plugin, code, language)).tokens).toEqual(
-            highlighter.codeToTokens(code, {
-              lang: language as BundledLanguage,
-              themes: { light: "github-light", dark: "github-dark" },
-            }).tokens,
-          );
-        }
-        expect(worker.received.length).toBeGreaterThan(0);
-      } finally {
-        highlighter.dispose();
-      }
-    },
-    20_000,
-  );
-
-  it("keeps complete lines' token arrays while the unfinished line streams", async () => {
-    const { plugin } = workerPlugin();
-    const first = await highlight(plugin, "const first = 1;\nconst second");
-    const next = await highlight(
-      plugin,
-      "const first = 1;\nconst second = 2;\nconst third",
-    );
-    expect(next.tokens[0]).toBe(first.tokens[0]);
-    expect(next.tokens[1]).not.toBe(first.tokens[1]);
-    expect(text(next)).toBe("const first = 1;\nconst second = 2;\nconst third");
-  }, 20_000);
-
-  it("answers interleaved fences in order while requests overlap", async () => {
-    const { plugin } = workerPlugin();
-    const a = "function a() {\n  return 1;\n}\nconst x = a();";
-    const b = "class B {\n  value = 2;\n}\nnew B();";
-    const versions: string[] = [];
-    for (let end = 4; end <= Math.max(a.length, b.length); end += 7) {
-      versions.push(a.slice(0, end), b.slice(0, end));
-    }
-    versions.push(a, b);
-    // Issued at once: the worker's checkpoint and this side's last reply
-    // must stay in step even when no reply has arrived between requests.
-    const results = await Promise.all(
-      versions.map((code) => highlight(plugin, code)),
-    );
-    const highlighter = await shiki.createHighlighter({
-      themes: plugin.getThemes(),
-      langs: ["typescript"],
-      engine: createJavaScriptRegexEngine({ forgiving: true }),
-    });
-    try {
-      results.forEach((result, index) => {
-        expect(text(result)).toBe(versions[index]);
-        expect(result.tokens).toEqual(
-          highlighter.codeToTokens(versions[index], {
-            lang: "typescript",
-            themes: { light: "github-light", dark: "github-dark" },
-          }).tokens,
-        );
-      });
-    } finally {
-      highlighter.dispose();
-    }
-  }, 20_000);
-
-  it("answers unanswered requests as plain text when the worker fails", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const { plugin, worker } = workerPlugin(1);
-      const sources = ["const a = 1;\nconst b", "let c = 3;", "", "x\n"];
-      const results = await Promise.all(
-        sources.map((code) => highlight(plugin, code)),
-      );
-      expect(results.map(text)).toEqual(sources);
-      expect(results[0].tokens.map((line) => line.length)).toEqual([1, 1]);
-      expect(results[0].tokens[1][0].offset).toBe(13);
-      expect(results[0].tokens.flat().every((token) => !token.color)).toBe(true);
-      expect(worker.terminated).toBe(true);
-      expect(error).toHaveBeenCalledTimes(1);
-      // Later requests do not reach the worker again.
-      expect(text(await highlight(plugin, "const d = 4;"))).toBe("const d = 4;");
-      expect(worker.received).toHaveLength(4);
-      expect(plugin.cachedResults()).toBe(5);
-    } finally {
-      error.mockRestore();
-    }
-  }, 20_000);
-
-  it("warms grammars through the worker and never on this thread", async () => {
-    const { plugin, worker } = workerPlugin();
-    await plugin.warmUp(["typescript"]);
-    expect(worker.received).toEqual([{ id: 1, warm: ["typescript"] }]);
-
-    const inline = createInlineBackend();
-    const send = vi.spyOn(inline, "send");
-    const local = createBoundedCodePlugin({ backend: inline });
-    await local.warmUp(["typescript"]);
-    expect(send).not.toHaveBeenCalled();
   }, 20_000);
 });

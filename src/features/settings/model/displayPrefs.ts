@@ -6,6 +6,7 @@ const MASK_EMAILS_KEY = "monocode.maskEmails";
 const COMPOSER_AUTOCORRECT_KEY = "monocode.composerAutocorrect";
 const RAIL_MONOS_PINNED_KEY = "monocode.railMonosPinned";
 const ANIMATE_NUMBERS_KEY = "monocode.animateNumbers";
+export const PACED_REVEAL_KEY = "monocode.pacedReveal";
 
 export const SHOW_REMAINING_USAGE_DEFAULT = false;
 export const MASK_EMAILS_DEFAULT = true;
@@ -81,6 +82,22 @@ const animateNumbers = flagStore(
   ANIMATE_NUMBERS_DEFAULT,
   ANIMATE_NUMBERS_CHANGE_EVENT,
 );
+const pacedReveal = flagStore(
+  PACED_REVEAL_KEY,
+  true,
+  "monocode:pacedrevealchange",
+);
+export const loadPacedReveal = pacedReveal.load;
+export const savePacedReveal = pacedReveal.save;
+export const usePacedReveal = pacedReveal.useFlag;
+
+const newLayoutPromptDismissed = flagStore(
+  "monocode.newLayoutPromptDismissed",
+  false,
+  "monocode:newlayoutpromptdismissedchange",
+);
+export const saveNewLayoutPromptDismissed = newLayoutPromptDismissed.save;
+export const useNewLayoutPromptDismissed = newLayoutPromptDismissed.useFlag;
 
 /** Usage meters fill with what is left instead of what is used. */
 export const loadShowRemainingUsage = showRemainingUsage.load;

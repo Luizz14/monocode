@@ -110,6 +110,7 @@ import SidebarRight01Icon from "@hugeicons/core-free-icons/SidebarRight01Icon";
 import SignalFull01Icon from "@hugeicons/core-free-icons/SignalFull01Icon";
 import SignalLow01Icon from "@hugeicons/core-free-icons/SignalLow01Icon";
 import SignalMedium01Icon from "@hugeicons/core-free-icons/SignalMedium01Icon";
+import SourceCodeIcon from "@hugeicons/core-free-icons/SourceCodeIcon";
 import SparklesIcon from "@hugeicons/core-free-icons/SparklesIcon";
 import SquareIcon from "@hugeicons/core-free-icons/SquareIcon";
 import SquareLock02Icon from "@hugeicons/core-free-icons/SquareLock02Icon";
@@ -208,6 +209,7 @@ export const CircleHelp = wrap(HelpCircleIcon, "CircleHelp");
 export const CircleX = wrap(CancelCircleIcon, "CircleX");
 export const CloudUpload = wrap(CloudUploadIcon, "CloudUpload");
 export const Clock = wrap(Clock01Icon, "Clock");
+export const Code = wrap(SourceCodeIcon, "Code");
 export const Copy = wrap(Copy01Icon, "Copy");
 export const Crown = wrap(CrownIcon, "Crown");
 export const CursorMagicSelection = wrap(

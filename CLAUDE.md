@@ -19,6 +19,6 @@ Don't use it when:
 - **The element remounts on change** (keyed by the value, or swapped for a different element): the roll never runs.
 - **Another text effect already owns the text**: `ParticleText` (sidebar session titles), `MonoWorkTicker`, or `Shimmer`. Shimmer's `background-clip: text` conflicts with the roll.
 - **The text is multi-line or streamed.**
-- **Code measures the label's width in a layout effect**: the width glides for `RESIZE_MS` after a change, so measure again once the roll lands. See `DiffStat` in `Sidebar.tsx`.
+- **Code measures the label's width in a layout effect**: the width glides for `RESIZE_MS` after a change, so a single measurement goes stale. Observe the label's own box with a `ResizeObserver` so each step of the glide is measured again. See `DiffStat` in `Sidebar.tsx`.
 
 The timing and shape constants live in `src/shared/lib/rollText.ts`; tests are in `src/shared/lib/rollText.test.ts`.

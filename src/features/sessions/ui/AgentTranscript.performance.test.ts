@@ -2,6 +2,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { TranscriptTurnCache } from "../model/transcriptTurnCache";
 import type { Block } from "../model/session";
 import * as activity from "../model/transcriptActivity";
 import * as artifactsModule from "../../artifacts/artifacts";
@@ -9,7 +10,11 @@ import { AgentTranscript } from "./AgentTranscript";
 
 vi.mock("../model/transcriptActivity", async (original) => {
   const actual = await original<typeof activity>();
-  return { ...actual, groupTurnItems: vi.fn(actual.groupTurnItems) };
+  return {
+    ...actual,
+    groupTurns: vi.fn(actual.groupTurns),
+    groupTurnItems: vi.fn(actual.groupTurnItems),
+  };
 });
 vi.mock("../../artifacts/artifacts", async (original) => {
   const actual = await original<typeof artifactsModule>();
@@ -58,9 +63,11 @@ afterEach(() => {
   host.remove();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 it("regroups only the changing live turn, including after a tab revisit", async () => {
+  vi.useFakeTimers();
   const blocks: Block[] = Array.from({ length: 20 }, (_, index): Block[] => [
     { id: `u${index}`, role: "user", text: `Question ${index}` },
     { id: `a${index}`, role: "assistant", text: `Answer ${index}` },
@@ -74,8 +81,14 @@ it("regroups only the changing live turn, including after a tab revisit", async 
       }),
     ),
   );
+  expect(host.querySelectorAll("[data-transcript-turn]")).toHaveLength(3);
+  for (let index = 0; index < 20; index++)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
   expect(host.querySelectorAll("[data-transcript-turn]")).toHaveLength(20);
   vi.mocked(activity.groupTurnItems).mockClear();
+  vi.mocked(activity.groupTurns).mockClear();
   const updated = blocks.slice();
   updated[updated.length - 1] = {
     ...updated[updated.length - 1],
@@ -91,6 +104,7 @@ it("regroups only the changing live turn, including after a tab revisit", async 
     ),
   );
   expect(activity.groupTurnItems).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(activity.groupTurns).mock.calls[0][0]).toHaveLength(2);
   expect(vi.mocked(activity.groupTurnItems).mock.calls[0][1]).toEqual({
     settled: false,
   });
@@ -165,7 +179,12 @@ it("re-renders only the turn a streaming update changed, with inline callbacks",
       }),
     );
   await act(async () => render(blocks));
-  expect(host.querySelectorAll("[data-transcript-turn]")).toHaveLength(20);
+  // The opening window paints a few turns, then warms the rest one a frame.
+  await vi.waitFor(
+    () =>
+      expect(host.querySelectorAll("[data-transcript-turn]")).toHaveLength(20),
+    { timeout: 5_000 },
+  );
   turnRenders.mockClear();
 
   let updated = blocks.slice();
@@ -178,4 +197,19 @@ it("re-renders only the turn a streaming update changed, with inline callbacks",
     turnRenders.mockClear();
   }
   expect(host.textContent).toContain("Latest output here");
+});
+
+it("does not rebuild an unchanged visible transcript when its parent updates", () => {
+  const group = vi.spyOn(TranscriptTurnCache.prototype, "group");
+  const blocks: Block[] = [{ id: "u", role: "user", text: "Hello" }];
+  act(() =>
+    root.render(createElement(AgentTranscript, { blocks, visible: true })),
+  );
+  group.mockClear();
+  for (let i = 0; i < 20; i++) {
+    act(() =>
+      root.render(createElement(AgentTranscript, { blocks, visible: true })),
+    );
+  }
+  expect(group).not.toHaveBeenCalled();
 });

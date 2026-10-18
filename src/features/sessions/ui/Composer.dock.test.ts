@@ -103,19 +103,27 @@ describe("composer box line", () => {
 
   it("shares the rounded glass and inset line in both places", () => {
     for (const shell of [true, false]) {
-      const classes = mount({ shell }).box().className.split(/\s+/);
+      const box = mount({ shell }).box();
+      const classes = box.className.split(/\s+/);
       expect(classes).toEqual(
         expect.arrayContaining([
           "rounded-3xl",
-          "bg-content/3",
-          "backdrop-blur-sm",
           "outline-[1.5px]",
           "-outline-offset-3",
           "outline-content/10",
         ]),
       );
       expect(classes.some((name) => name.startsWith("border"))).toBe(false);
+      // The frost is the box's ::before, cut to the fork look's corners.
+      expect(box.dataset.composerLook).toBe("fork");
     }
+    const css = readFileSync(
+      join(process.cwd(), "src/styles/index.css"),
+      "utf8",
+    );
+    expect(css).toMatch(
+      /\[data-composer-box\]\[data-composer-look="fork"\][^{]*\{[^}]*--composer-radius: var\(--radius-3xl/,
+    );
   });
 });
 
@@ -279,7 +287,10 @@ describe("docked composer behavior", () => {
       join(process.cwd(), "src/styles/index.css"),
       "utf8",
     );
-    const rule = /\.edit-last-turn-composer \{([^}]*)\}/.exec(css)![1];
+    const rule =
+      /\[data-composer-look="fork"\]\.edit-last-turn-composer \{([^}]*)\}/.exec(
+        css,
+      )![1];
     expect(rule).toContain("outline-style: dashed");
     expect(rule).toContain("outline-color:");
     expect(rule).toContain("--user-accent-color, var(--color-accent)");
