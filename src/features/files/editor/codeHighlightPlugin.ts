@@ -4,12 +4,14 @@ import type {
   HighlightResult,
   ThemeInput,
 } from "@streamdown/code";
-import { bundledLanguagesInfo } from "shiki/langs";
 import type { BundledLanguage } from "shiki";
-export {
-  createBoundedCodePlugin,
-  type BoundedCodePlugin,
-} from "./codeHighlightEngine";
+// The window never imports shiki itself: its engine runs in the worker, and
+// importing `shiki/langs` here would pull the engine into the boot bundle and
+// emit every grammar chunk a second time for the window.
+import {
+  normalizeLanguage as normalize,
+  SHIKI_LANGUAGE_IDS,
+} from "./shikiLanguages";
 
 type Callback = (result: HighlightResult) => void;
 type Job = {
@@ -19,14 +21,7 @@ type Job = {
   callbacks: Set<Callback>;
   priority: number;
 };
-const languages = new Set(bundledLanguagesInfo.map((language) => language.id));
-const aliases = new Map(
-  bundledLanguagesInfo.flatMap((language) =>
-    (language.aliases ?? []).map((alias) => [alias, language.id] as const),
-  ),
-);
-const normalize = (language: string) =>
-  aliases.get(language.trim().toLowerCase()) ?? language.trim().toLowerCase();
+const languages = new Set(SHIKI_LANGUAGE_IDS);
 const MAX_CHARS = 500_000;
 const MAX_RESULTS = 100;
 const THEMES: [ThemeInput, ThemeInput] = ["light-plus", "dark-plus"];

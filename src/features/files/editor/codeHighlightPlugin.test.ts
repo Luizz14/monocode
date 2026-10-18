@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createBoundedCodePlugin,
   type BoundedCodePlugin,
-} from "./codeHighlightPlugin";
+} from "./codeHighlightEngine";
 
 vi.mock("shiki", async (importOriginal) => {
   const actual = await importOriginal<typeof import("shiki")>();
