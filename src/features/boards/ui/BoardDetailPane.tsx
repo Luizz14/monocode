@@ -639,10 +639,6 @@ function resolveInlineImage(src: string): Promise<string> {
   return loadAttachmentDataUrl(src);
 }
 
-/** Name, size, date and comment columns, as Azure DevOps lays them out. */
-const ATTACHMENT_COLUMNS =
-  "grid-cols-[minmax(0,1fr)_4.5rem] @min-[360px]:grid-cols-[minmax(0,1fr)_4.5rem_6.5rem] @min-[420px]:grid-cols-[minmax(0,1fr)_4.5rem_6.5rem_minmax(0,8rem)]";
-
 function AttachmentList({
   attachments,
   onPreview,
@@ -651,15 +647,13 @@ function AttachmentList({
   onPreview: (src: string, alt: string) => void;
 }) {
   return (
-    <div className="@container flex flex-col gap-1">
+    <div className="flex flex-col gap-1">
       <div
         aria-hidden
-        className={`grid gap-x-3 px-1 text-[10.5px] text-content/40 ${ATTACHMENT_COLUMNS}`}
+        className="flex items-center justify-between px-1 text-[10.5px] text-content/40"
       >
         <span>Name</span>
-        <span className="text-right">Size</span>
-        <span className="hidden @min-[360px]:block">Date Added</span>
-        <span className="hidden @min-[420px]:block">Comments</span>
+        <span>Size</span>
       </div>
       <ul role="list" className="flex flex-col gap-1">
         {attachments.map((attachment) => (
@@ -674,6 +668,11 @@ function AttachmentList({
   );
 }
 
+/**
+ * One attachment: the name and size on the first line, the date added and
+ * the comment under them. Azure lays these out as four columns, but the pane
+ * is too narrow for that to leave the name readable.
+ */
 function AttachmentRow({
   attachment,
   onPreview,
@@ -719,7 +718,7 @@ function AttachmentRow({
     : "";
   return (
     <li className="flex flex-col gap-0.5 rounded-md border border-content/8 px-1 py-1 text-[12px]">
-      <div className={`grid items-center gap-x-3 ${ATTACHMENT_COLUMNS}`}>
+      <div className="flex items-center gap-3">
         <button
           type="button"
           onClick={() => void activate()}
@@ -729,7 +728,7 @@ function AttachmentRow({
               ? `${attachment.name}\n${attachment.comment}`
               : attachment.name
           }
-          className="flex min-w-0 items-center gap-2 rounded text-left text-content hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded text-left text-content hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           {image ? (
             <AttachmentThumb attachment={attachment} />
@@ -752,18 +751,24 @@ function AttachmentRow({
             />
           ) : null}
         </button>
-        <span className="text-right tabular-nums text-content/60">
+        <span className="shrink-0 tabular-nums text-content/60">
           {formatBytes(attachment.size)}
         </span>
-        <span className="hidden truncate text-content/60 @min-[360px]:block">
+      </div>
+      <div className="flex min-w-0 items-center gap-1.5 pl-12 text-[11px] text-content/50">
+        <span className="shrink-0" title="Date added">
           {date || "—"}
         </span>
-        <span
-          className="hidden truncate text-content/60 @min-[420px]:block"
-          title={attachment.comment || undefined}
-        >
-          {attachment.comment || "—"}
-        </span>
+        {attachment.comment ? (
+          <>
+            <span aria-hidden className="shrink-0 text-content/30">
+              ·
+            </span>
+            <span className="min-w-0 truncate" title={attachment.comment}>
+              {attachment.comment}
+            </span>
+          </>
+        ) : null}
       </div>
       {error ? (
         <p role="alert" className="px-1 text-[11px] text-red-400">

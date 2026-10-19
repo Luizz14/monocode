@@ -919,8 +919,7 @@ describe("BoardView", () => {
       const section = rows[0]!.closest("section")!;
       expect(section.textContent).toContain("Name");
       expect(section.textContent).toContain("Size");
-      expect(section.textContent).toContain("Date Added");
-      expect(section.textContent).toContain("Comments");
+      expect(rows[0]!.querySelector('[title="Date added"]')).not.toBeNull();
       expect(rows[0]!.textContent).toContain("tela.png");
       expect(rows[0]!.textContent).toContain("514 KB");
       expect(rows[0]!.textContent).toContain("Layout novo");
