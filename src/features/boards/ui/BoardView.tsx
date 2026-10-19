@@ -23,6 +23,7 @@ import {
 } from "../hooks/useBoardConnections";
 import { useBoardDrag } from "../hooks/useBoardDrag";
 import { useBoardSnapshot } from "../hooks/useBoardSnapshot";
+import { usePickupTask } from "../hooks/usePickupTask";
 import {
   adjacentMoveTarget,
   columnLoad,
@@ -57,6 +58,7 @@ import {
   BoardSkeleton,
 } from "./BoardStates";
 import { BoardTabs, boardPanelId, boardTabId } from "./BoardTabs";
+import { BoardToasts } from "./BoardToasts";
 import { BoardToolbar } from "./BoardToolbar";
 
 type Props = {
@@ -343,8 +345,15 @@ function BoardBody({
     search,
     mine,
   });
-  const { snapshot, grouped, pending, moveErrors, moveCard, dismissMoveError } =
-    board;
+  const {
+    snapshot,
+    grouped,
+    pending,
+    moveErrors,
+    moveCard,
+    patchCard,
+    dismissMoveError,
+  } = board;
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   const detailKeyRef = useRef(detailKey);
@@ -355,6 +364,14 @@ function BoardBody({
   groupedRef.current = grouped;
   const announceRef = useRef(announce);
   announceRef.current = announce;
+
+  const pickup = usePickupTask({
+    config,
+    snapshot,
+    patchCard,
+    announce,
+  });
+  const { afterMove } = pickup;
 
   const findCard = useCallback(
     (key: string): BoardCardData | undefined =>
@@ -371,6 +388,9 @@ function BoardBody({
       switch (outcome.status) {
         case "moved":
           say(`Moved ${card.ref} to ${columnName(outcome.column)}`);
+          // `card` is the card as it was before the move: the rule needs the
+          // state and the children it left from.
+          afterMove(card, outcome.column, outcome.card);
           break;
         case "failed":
           say(`Couldn't move ${card.ref}: ${outcome.error}`);
@@ -385,7 +405,7 @@ function BoardBody({
           break;
       }
     },
-    [findCard, moveCard],
+    [findCard, moveCard, afterMove],
   );
 
   const verdict = useCallback(
@@ -793,6 +813,12 @@ function BoardBody({
           />
         ) : null}
       </div>
+      <BoardToasts
+        toasts={pickup.toasts}
+        onDismiss={pickup.dismiss}
+        onUndo={pickup.undo}
+        onRetry={pickup.retry}
+      />
       {menu && menuCard && snapshot ? (
         <ExplorerMenu
           x={menu.x}

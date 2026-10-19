@@ -133,9 +133,21 @@ type BoardConfigBase = {
   createdAt: number;
 };
 
+/**
+ * Taking a story means a child Task assigned to you. With this on, moving a
+ * Proposed item into a work column makes that Task for you.
+ */
+export type AzureAutoTask = {
+  enabled: boolean;
+  /** The new Task's title. */
+  title: string;
+};
+
 export type AzureBoardConfig = BoardConfigBase & {
   provider: "azuredevops";
   filters: AzureBoardFilters;
+  /** Behavior, not a query: it never changes what the board loads. */
+  autoTask: AzureAutoTask;
 };
 
 export type LinearBoardConfig = BoardConfigBase & {

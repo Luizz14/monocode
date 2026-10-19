@@ -33,7 +33,9 @@ import {
   sameAzureOrg,
 } from "../model/azureBoardUrl";
 import {
+  DEFAULT_AUTO_TASK_TITLE,
   DEFAULT_BOARD_NAMES,
+  MAX_AUTO_TASK_TITLE_LENGTH,
   MAX_BOARD_NAME_LENGTH,
   MAX_BOARD_TEXT_LENGTH,
   boardConfigIssue,
@@ -41,6 +43,7 @@ import {
 import { boardErrorMessage } from "../model/boardSnapshot";
 import {
   BOARD_PROVIDER_LABELS,
+  type AzureAutoTask,
   type AzureBoardConfig,
   type AzureBoardFilters,
   type AzureIterationFilter,
@@ -344,6 +347,7 @@ function AzureBoardForm({
   onClose: () => void;
 }) {
   const [filters, setFilters] = useState<AzureBoardFilters>(initial.filters);
+  const [autoTask, setAutoTask] = useState<AzureAutoTask>(initial.autoTask);
   const [name, setName] = useState(initial.name);
   const [nameEdited, setNameEdited] = useState(!isNew);
   const [link, setLink] = useState("");
@@ -493,6 +497,7 @@ function AzureBoardForm({
     ...initial,
     name: trimName(shownName) || DEFAULT_BOARD_NAMES.azuredevops,
     filters: { ...filters, text: filters.text.trim() },
+    autoTask: { ...autoTask, title: autoTask.title.trim() },
   };
   const issue = boardConfigIssue(config);
   const canSave = issue === null && areaHints === null;
@@ -871,6 +876,32 @@ function AzureBoardForm({
           }))
         }
       />
+      <Toggle
+        label="Create my task when I pick up an item"
+        description="Moving an item out of its Proposed state (New, Defined) into a work column adds a child Task assigned to you, linked to the item, in its area and iteration."
+        on={autoTask.enabled}
+        onChange={(on) =>
+          setAutoTask((currentTask) => ({ ...currentTask, enabled: on }))
+        }
+      />
+      {autoTask.enabled ? (
+        <Field label="Task title">
+          <input
+            aria-label="Task title"
+            className={FIELD}
+            value={autoTask.title}
+            placeholder={DEFAULT_AUTO_TASK_TITLE}
+            maxLength={MAX_AUTO_TASK_TITLE_LENGTH}
+            autoComplete="off"
+            onChange={(event) =>
+              setAutoTask((currentTask) => ({
+                ...currentTask,
+                title: event.target.value,
+              }))
+            }
+          />
+        </Field>
+      ) : null}
 
       <Field label="Name">
         <input

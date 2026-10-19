@@ -689,6 +689,37 @@ describe("commitBoardMove", () => {
     ).toBe(true);
   });
 
+  it("keeps the card's children and who holds it through a move", async () => {
+    const snapshot = await loadBoardSnapshot(azureConfig());
+    const loaded = snapshot.cards.find((card) => card.number === 193)!;
+    const target = snapshot.columns.find((column) => column.id === "az:c3")!;
+    expect((await commitBoardMove(snapshot, loaded, target)).children).toEqual(
+      loaded.children,
+    );
+
+    const bug = {
+      ...loaded,
+      children: [
+        {
+          id: 1,
+          title: "Em implementação",
+          type: "Task",
+          state: "In Progress",
+          stateCategory: "inProgress" as const,
+          assignee: { id: "u-1", name: "Luiz" },
+          updatedAt: "2026-10-01T00:00:00Z",
+          url: "",
+        },
+      ],
+    };
+    const moved = await commitBoardMove(snapshot, bug, target);
+    expect(moved.children).toBe(bug.children);
+    expect(moved.owners).toMatchObject({
+      primary: { name: "Luiz" },
+      source: "children",
+    });
+  });
+
   it("places the card where the server's state says", async () => {
     const snapshot = await loadBoardSnapshot(azureConfig());
     const story = snapshot.cards.find((card) => card.number === 211)!;

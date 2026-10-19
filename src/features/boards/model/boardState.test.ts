@@ -217,6 +217,44 @@ describe("boardReducer moves", () => {
     expect(applyBoardMoves(state.snapshot, state.moves)).toBe(refreshed);
   });
 
+  it("shows a patched card until a load that started after it lands", () => {
+    const patched = { ...card(1, "accepted"), title: "Patched" };
+    const patchedState = run(
+      loaded,
+      { type: "load-start", seq: 2 },
+      { type: "card-patch", seq: 3, card: patched },
+      // A load that began before the patch cannot know about it.
+      { type: "load-success", seq: 2, snapshot: snapshot(base.cards, 2) },
+    );
+    expect(applyBoardMoves(patchedState.snapshot, patchedState.moves)!.cards[0]).toBe(
+      patched,
+    );
+    expect(pendingBoardMoveKeys(patchedState.moves).size).toBe(0);
+    const settled = run(
+      patchedState,
+      { type: "load-start", seq: 4 },
+      { type: "load-success", seq: 4, snapshot: snapshot(base.cards, 3) },
+    );
+    expect(settled.moves).toEqual({});
+    // Patching again replaces the earlier patch.
+    const again = { ...patched, title: "Patched twice" };
+    expect(
+      run(patchedState, { type: "card-patch", seq: 5, card: again }).moves[
+        "azuredevops:1"
+      ]!.card,
+    ).toBe(again);
+  });
+
+  it("leaves a card whose move is still in flight alone when patched", () => {
+    const state = run(
+      loaded,
+      { type: "move-start", seq: 2, card: optimistic },
+      { type: "card-patch", seq: 3, card: card(1, "accepted") },
+    );
+    expect(state.moves["azuredevops:1"]!.card).toBe(optimistic);
+    expect(pendingBoardMoveKeys(state.moves).size).toBe(1);
+  });
+
   it("starts over on reset", () => {
     const state = run(
       loaded,

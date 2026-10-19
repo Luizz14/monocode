@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ACTIVE_BOARD_KEY,
   BOARDS_CHANGE_EVENT,
+  DEFAULT_AUTO_TASK_TITLE,
+  MAX_AUTO_TASK_TITLE_LENGTH,
   BOARDS_KEY,
   MAX_BOARDS,
   boardConfigIssue,
@@ -42,6 +44,7 @@ const azure: AzureBoardConfig = {
     assignedToMe: false,
     includeDone: false,
   },
+  autoTask: { enabled: true, title: "Em implementação" },
 };
 
 const linear: LinearBoardConfig = {
@@ -132,6 +135,7 @@ describe("board config storage", () => {
         assignedToMe: false,
         includeDone: true,
       },
+      autoTask: { enabled: true, title: "Em implementação" },
     });
     expect(
       parseBoardConfig({
@@ -150,6 +154,53 @@ describe("board config storage", () => {
         includeDone: false,
       },
     });
+  });
+
+  it("turns the pickup task on for boards saved before it existed", () => {
+    const { autoTask: _autoTask, ...old } = azure;
+    expect(parseBoardConfig(old)).toEqual(azure);
+    expect(parseBoardConfig({ ...old, autoTask: "yes" })?.provider).toBe(
+      "azuredevops",
+    );
+    expect(
+      (parseBoardConfig({ ...old, autoTask: null }) as AzureBoardConfig).autoTask,
+    ).toEqual({ enabled: true, title: DEFAULT_AUTO_TASK_TITLE });
+  });
+
+  it("reads the pickup task, trimming and bounding its title", () => {
+    const read = (autoTask: unknown) =>
+      (parseBoardConfig({ ...azure, autoTask }) as AzureBoardConfig).autoTask;
+    expect(read({ enabled: false, title: "Dev" })).toEqual({
+      enabled: false,
+      title: "Dev",
+    });
+    expect(read({ enabled: true, title: "  Implementar  " })).toEqual({
+      enabled: true,
+      title: "Implementar",
+    });
+    expect(read({ title: "   " })).toEqual({
+      enabled: true,
+      title: DEFAULT_AUTO_TASK_TITLE,
+    });
+    expect(read({ enabled: "no", title: 7 })).toEqual({
+      enabled: true,
+      title: DEFAULT_AUTO_TASK_TITLE,
+    });
+    expect(read({ title: "t".repeat(300) }).title).toBe(
+      "t".repeat(MAX_AUTO_TASK_TITLE_LENGTH),
+    );
+  });
+
+  it("round-trips the pickup task settings", () => {
+    const off: AzureBoardConfig = {
+      ...azure,
+      autoTask: { enabled: false, title: "Desenvolvimento" },
+    };
+    saveBoardConfigs([off, linear]);
+    expect(loadBoardConfigs()).toEqual([off, linear]);
+    const copy = duplicateBoardConfig([off], "a1")!.copy as AzureBoardConfig;
+    expect(copy.autoTask).toEqual(off.autoTask);
+    expect(copy.autoTask).not.toBe(off.autoTask);
   });
 
   it("survives corrupt JSON", () => {
@@ -260,6 +311,7 @@ describe("board list operations", () => {
         iteration: { kind: "current" },
         areaPaths: [],
       },
+      autoTask: { enabled: true, title: "Em implementação" },
     });
     expect(created.id).toMatch(/\S{8,}/);
     expect(newBoardConfig("linear").filters.teamIds).toEqual([]);
@@ -288,6 +340,16 @@ describe("board derived values", () => {
         filters: { ...linear.filters, teamIds: ["des", "eng"] },
       }),
     ).toBe(boardQueryKey(linear));
+  });
+
+  it("keeps the pickup task out of the query key", () => {
+    const key = boardQueryKey(azure);
+    expect(
+      boardQueryKey({
+        ...azure,
+        autoTask: { enabled: false, title: "Outra" },
+      }),
+    ).toBe(key);
   });
 
   it("reports what a board still needs", () => {

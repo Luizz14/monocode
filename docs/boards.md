@@ -100,6 +100,30 @@ to pick up. The chip is a quick filter and is not saved with the board; the
 board's **Assigned to me** setting applies the same rule on the server, so the
 item cap counts only the items it keeps.
 
+### Picking up an item
+
+On the same convention, taking a story is also making your task. So when you
+move an Azure DevOps item out of a Proposed state (New, Defined) into a work
+column (one whose state is In Progress), MonoCode adds a child Task for you
+right after the move is saved: assigned to you, linked to the item, and in the
+item's area and iteration. It is titled **Em implementação** unless you change
+it. A toast at the top right says what happened, with **Open** to see the task
+and **Undo** while the toast is up (about ten seconds), which moves the task to
+Azure's recycle bin and takes you off the card again. If the task can't be
+created, the toast stays with **Retry**, and the card stays where you moved it.
+
+It only runs when all of these hold: the item is not itself a Task, Test, Test
+Case or Issue; it was in a Proposed state; the column it landed in is a work
+column; and you don't already hold an unfinished child of it. MonoCode also asks
+Azure first, so a second window or a retry never makes a second task. Moves
+between work columns, back to a Proposed column, or into a done column never
+create anything.
+
+The setting is per board. Edit the board and turn off **Create my task when I
+pick up an item**, or change the **Task title** (up to 120 characters). Boards
+saved before this existed have it on. The setting does not change what the board
+loads.
+
 ## Details
 
 Click a card, or press Enter or Space on a focused one, to open its details in a

@@ -48,6 +48,8 @@ export type BoardAction =
   | { type: "move-start"; seq: number; card: BoardCard }
   | { type: "move-success"; seq: number; card: BoardCard }
   | { type: "move-failure"; key: string; error: string }
+  /** A card changed outside a move (a task made or removed for it). */
+  | { type: "card-patch"; seq: number; card: BoardCard }
   /** Without `key`, clears the board-level error. */
   | { type: "dismiss-error"; key?: string };
 
@@ -151,6 +153,25 @@ export function boardReducer(
             ...move,
             card: action.card,
             status: "committed",
+            committedSeq: action.seq,
+          },
+        },
+      };
+    }
+    case "card-patch": {
+      const key = action.card.key;
+      // A move in flight owns the card until the provider answers.
+      if (state.moves[key]?.status === "pending") return state;
+      // Shown like a committed move: until a load that started after it.
+      return {
+        ...state,
+        moves: {
+          ...state.moves,
+          [key]: {
+            key,
+            card: action.card,
+            status: "committed",
+            startedSeq: action.seq,
             committedSeq: action.seq,
           },
         },

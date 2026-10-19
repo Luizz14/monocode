@@ -1,5 +1,6 @@
 import type {
   AzureAreaFilter,
+  AzureAutoTask,
   AzureBoardConfig,
   AzureBoardFilters,
   AzureIterationFilter,
@@ -16,6 +17,9 @@ export const BOARDS_CHANGE_EVENT = "monocode:boards-change";
 export const MAX_BOARDS = 50;
 export const MAX_BOARD_NAME_LENGTH = 80;
 export const MAX_BOARD_TEXT_LENGTH = 200;
+
+export const MAX_AUTO_TASK_TITLE_LENGTH = 120;
+export const DEFAULT_AUTO_TASK_TITLE = "Em implementação";
 
 export const DEFAULT_BOARD_NAMES: Record<BoardProvider, string> = {
   azuredevops: "Azure DevOps board",
@@ -74,6 +78,16 @@ function parseAzureFilters(raw: Record<string, unknown>): AzureBoardFilters {
   };
 }
 
+/** Boards saved before this existed come back with the task on. */
+function parseAutoTask(value: unknown): AzureAutoTask {
+  const raw = record(value);
+  return {
+    enabled: raw?.enabled !== false,
+    title:
+      text(raw?.title, MAX_AUTO_TASK_TITLE_LENGTH) || DEFAULT_AUTO_TASK_TITLE,
+  };
+}
+
 function parseLinearFilters(raw: Record<string, unknown>): LinearBoardFilters {
   const teamIds = Array.isArray(raw.teamIds)
     ? [
@@ -117,6 +131,7 @@ export function parseBoardConfig(value: unknown): BoardConfig | null {
       createdAt,
       provider,
       filters: parseAzureFilters(filters),
+      autoTask: parseAutoTask(raw.autoTask),
     };
   }
   return {
@@ -361,6 +376,7 @@ export function newBoardConfig(
         includeDone: false,
         ...(filters as Partial<AzureBoardFilters>),
       },
+      autoTask: { enabled: true, title: DEFAULT_AUTO_TASK_TITLE },
     };
   }
   return {

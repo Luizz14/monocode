@@ -261,6 +261,21 @@ export type AzureBoardMoveRequest = {
   effortField: string | null;
 };
 
+export type AzureCreateChildRequest = {
+  project: string;
+  parentId: number;
+  title: string;
+  areaPath: string;
+  iterationPath: string;
+  workItemType: string;
+};
+
+export type AzureChildCreated = {
+  /** `false` when the user already held an unfinished child, returned as is. */
+  created: boolean;
+  child: AzureBoardChild;
+};
+
 export const AZURE_BOARD_LIMIT = 500;
 export const AZURE_NO_AREA_NOTICE =
   "This team doesn't scope by area. Pick areas for this board.";
@@ -456,6 +471,24 @@ export function azureAttachmentOpen(
   name: string,
 ): Promise<string> {
   return invoke<string>("azure_boards_attachment_open", { url, name });
+}
+
+/** Adds the connected user's child task under `parentId`, or returns the one they hold. */
+export function createAzureChild(
+  request: AzureCreateChildRequest,
+): Promise<AzureChildCreated> {
+  return invoke<AzureChildCreated>("azure_boards_create_child", { request });
+}
+
+/** Moves a work item to Azure's recycle bin. */
+export function deleteAzureWorkItem(
+  project: string,
+  id: number,
+): Promise<void> {
+  return invoke<void>("azure_boards_delete_work_item", {
+    project: project.trim(),
+    id,
+  });
 }
 
 // ---------------------------------------------------------------------------

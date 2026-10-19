@@ -34,6 +34,7 @@ import type {
   BoardCard,
   BoardColumn,
   BoardConfig,
+  BoardPerson,
   BoardSnapshot,
 } from "../model/boardTypes";
 
@@ -82,6 +83,13 @@ export type UseBoardSnapshot = {
   /** `items` (default) refetches cards; `all` also refetches team setup and columns. */
   refresh: (scope?: Exclude<BoardRefresh, "none">) => void;
   moveCard: (card: BoardCard, columnId: string) => Promise<BoardMoveOutcome>;
+  /**
+   * Shows `card` in place of the loaded one until a newer load replaces it,
+   * for a change made outside a move, such as a task created for the card.
+   */
+  patchCard: (card: BoardCard) => void;
+  /** The connected user, when the provider reported one. */
+  me: BoardPerson | undefined;
   /** Without a key, clears the board-level error. */
   dismissMoveError: (key?: string) => void;
 };
@@ -271,6 +279,14 @@ export function useBoardSnapshot(
     [],
   );
 
+  const patchCard = useCallback((card: BoardCard) => {
+    // The move overlay is exactly "show the provider's answer until a newer
+    // load", which is what a patched card needs.
+    dispatch({ type: "card-patch", seq: ++seqRef.current, card });
+    const configId = viewRef.current?.configId ?? configRef.current?.id;
+    if (configId) patchCachedBoardCard(configId, card);
+  }, []);
+
   const dismissMoveError = useCallback((key?: string) => {
     dispatch({ type: "dismiss-error", key });
   }, []);
@@ -308,6 +324,8 @@ export function useBoardSnapshot(
     moveErrors: state.moveErrors,
     refresh,
     moveCard,
+    patchCard,
+    me: view?.azure?.me,
     dismissMoveError,
   };
 }

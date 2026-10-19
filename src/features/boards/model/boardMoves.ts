@@ -1,6 +1,7 @@
 import { recordInboxSelfActivity } from "../../inbox/model/inboxSelfActivity";
 import { azureItemToCard, azureStateMeta, moveAzureCard } from "./azureBoards";
 import { resolveBoardMove } from "./boardColumns";
+import { resolveBoardOwners, samePerson } from "./boardOwners";
 import {
   linearStateCategory,
   normalizeHexColor,
@@ -52,6 +53,27 @@ export function optimisticPlacement(
   return { ...card, columnId: column.id };
 }
 
+/**
+ * The provider's answer to a move carries the item's own fields only, so the
+ * children and the people they decide would vanish from the card until the
+ * next load. The children stay (a move does not change them), the owners are
+ * resolved again, and the connected user stays marked.
+ */
+function keepPeople(
+  before: BoardCard,
+  after: BoardCard,
+  me: BoardCard["assignee"],
+): BoardCard {
+  const next: BoardCard = { ...after };
+  if (next.assignee && samePerson(next.assignee, me)) {
+    next.assignee = { ...next.assignee, isMe: true };
+  }
+  if (before.children) next.children = before.children;
+  const owners = resolveBoardOwners(next, next.children ?? []);
+  if (owners) next.owners = owners;
+  return next;
+}
+
 export class BoardMoveError extends Error {
   constructor(message: string) {
     super(message);
@@ -99,7 +121,11 @@ export async function commitBoardMove(
       repo: item.project || card.project,
       number: item.id,
     });
-    return azureItemToCard(item, snapshot.columns, azure.stateInfo, card.order);
+    return keepPeople(
+      card,
+      azureItemToCard(item, snapshot.columns, azure.stateInfo, card.order),
+      azure.me,
+    );
   }
   const issue = await moveLinearCard(card.id, plan.stateId);
   recordInboxSelfActivity({ provider: "linear", kind: "linear", id: issue.id });

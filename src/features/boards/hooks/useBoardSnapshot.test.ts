@@ -288,6 +288,25 @@ describe("useBoardSnapshot", () => {
     });
   });
 
+  it("shows a patched card, also for a board remounted from the cache, until a newer load", async () => {
+    const board = config("eng");
+    await render({ config: board });
+    const card = result.snapshot!.cards[0]!;
+    expect(result.me).toBeUndefined();
+    await act(async () => result.patchCard({ ...card, title: "Patched" }));
+    expect(result.snapshot!.cards[0]!.title).toBe("Patched");
+    expect(result.grouped.get(card.columnId)![0]!.title).toBe("Patched");
+
+    // A remount reads the cached snapshot, which holds the patch too.
+    await act(async () => root.render(createElement("div")));
+    await render({ config: board });
+    expect(result.snapshot!.cards[0]!.title).toBe("Patched");
+
+    await act(async () => result.refresh("items"));
+    await flush();
+    expect(result.snapshot!.cards[0]!.title).toBe(card.title);
+  });
+
   describe("polling", () => {
     beforeEach(() => {
       vi.useFakeTimers({

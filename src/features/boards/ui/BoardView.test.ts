@@ -320,6 +320,10 @@ function detailFor(id: number): AzureWorkItemDetail {
 }
 
 let azureConnected: boolean;
+let queryItems: AzureBoardItem[];
+let queryChildren: AzureBoardChildren;
+let createOutcome: "created" | "exists" | "error";
+let deleteFails: boolean;
 let moveResult: Deferred<AzureBoardItem> | null;
 let detailFails: boolean;
 let previewFails: boolean;
@@ -342,7 +346,7 @@ function route(command: string, args?: unknown): unknown {
     case "azure_boards_board":
       return { board: layout, types };
     case "azure_boards_query":
-      return { items, truncated: false };
+      return { items: queryItems, truncated: false };
     case "azure_devops_projects":
       return [{ id: "p1", name: "Proj" }];
     case "azure_boards_teams":
@@ -353,7 +357,7 @@ function route(command: string, args?: unknown): unknown {
       if (moveResult) return moveResult.promise;
       throw new Error("Unexpected move");
     case "azure_boards_children":
-      return children;
+      return queryChildren;
     case "azure_boards_me":
       return me;
     case "azure_boards_work_item": {
@@ -361,6 +365,28 @@ function route(command: string, args?: unknown): unknown {
       const { id } = args as { project: string; id: number };
       return detailFor(id);
     }
+    case "azure_boards_create_child": {
+      if (createOutcome === "error") {
+        throw new Error("TF401320: Rule error for field Area Path");
+      }
+      const { request } = args as { request: { parentId: number } };
+      return {
+        created: createOutcome === "created",
+        child: {
+          id: 386900,
+          parentId: request.parentId,
+          workItemType: "Task",
+          title: "Em implementação",
+          state: "Defined",
+          assignedTo: { ...me, imageUrl: null },
+          changedDate: "2026-10-19T12:00:00Z",
+          url: "https://dev.azure.com/org/Proj/_workitems/edit/386900",
+        },
+      };
+    }
+    case "azure_boards_delete_work_item":
+      if (deleteFails) throw new Error("TF400813: Not authorized to delete");
+      return null;
     case "azure_boards_attachment_preview":
       if (previewFails) throw new Error("Attachment is too large to preview");
       return { mimeType: "image/png", dataBase64: "AAAA" };
@@ -472,6 +498,10 @@ beforeEach(() => {
   localStorage.clear();
   clearBoardCaches();
   azureConnected = true;
+  queryItems = items;
+  queryChildren = children;
+  createOutcome = "created";
+  deleteFails = false;
   moveResult = null;
   invoke.mockReset();
   detailFails = false;
@@ -559,7 +589,10 @@ describe("BoardView", () => {
   });
 
   it("moves a card with Alt+Right and announces it once the provider answers", async () => {
-    storeBoards([azureBoard()]);
+    // The pickup task would announce over "Moved"; it has its own tests below.
+    storeBoards([
+      { ...azureBoard(), autoTask: { enabled: false, title: "Em implementação" } },
+    ]);
     await render();
     moveResult = deferred();
     const bug = card("#20");
@@ -992,6 +1025,296 @@ describe("BoardView", () => {
       expect(pane.querySelector("a[data-attachment]")?.textContent).toBe(
         "Image: inline.png",
       );
+    });
+  });
+  describe("picking up an item", () => {
+    const createCalls = () =>
+      invoke.mock.calls.filter(([command]) => command === "azure_boards_create_child");
+
+    /** Moves a card one column right (or left) and lets everything settle. */
+    async function moveBy(ref: string, key: "ArrowRight" | "ArrowLeft", moved: AzureBoardItem) {
+      moveResult = deferred();
+      pressKey(card(ref), { key, altKey: true });
+      await flush();
+      await act(async () => moveResult!.resolve(moved));
+      await flush();
+    }
+
+    const bugActive = () =>
+      item({
+        id: 20,
+        workItemType: "Bug",
+        title: "Crash on login",
+        state: "Active",
+        boardColumn: "Active",
+        tags: ["Android"],
+      });
+
+    const toast = (kind?: string): HTMLElement | null =>
+      document.querySelector<HTMLElement>(
+        kind ? `[data-board-toast="${kind}"]` : "[data-board-toast]",
+      );
+
+    function toastButton(label: string): HTMLButtonElement {
+      const found = [...document.querySelectorAll<HTMLButtonElement>("[data-board-toast] button")].find(
+        (button) => button.textContent === label,
+      );
+      if (!found) throw new Error(`No toast button ${label}`);
+      return found;
+    }
+
+    function people(ref: string): string[] {
+      return [
+        ...card(ref).querySelectorAll<HTMLElement>("[data-card-people] span[title]"),
+      ].map((avatar) => avatar.textContent ?? "");
+    }
+
+    it("creates my task when a Proposed item moves into a work column", async () => {
+      storeBoards([azureBoard()]);
+      await render();
+      expect(people("#20")).toEqual([]);
+      await moveBy("#20", "ArrowRight", bugActive());
+
+      expect(createCalls()).toEqual([
+        [
+          "azure_boards_create_child",
+          {
+            request: {
+              project: "Proj",
+              parentId: 20,
+              title: "Em implementação",
+              areaPath: "Proj\\Team",
+              iterationPath: "Proj\\Sprint 42",
+              workItemType: "Task",
+            },
+          },
+        ],
+      ]);
+      const created = toast("created")!;
+      expect(created.textContent).toContain(
+        'Created Task #386900 "Em implementação" for #20',
+      );
+      expect([...created.querySelectorAll("button")].map((b) => b.textContent)).toEqual(
+        ["", "Open", "Undo"],
+      );
+      expect(created.querySelector("button")!.getAttribute("aria-label")).toBe("Dismiss");
+      expect(liveRegion()).toContain("Created Task #386900 for #20");
+      // The card is in Active and shows me as the one holding it.
+      expect(column("Active").contains(card("#20"))).toBe(true);
+      expect(people("#20")).toEqual(["LM"]);
+      expect(card("#20").querySelector("[data-person='me']")).not.toBeNull();
+
+      act(() => toastButton("Open").click());
+      expect(openUrl).toHaveBeenCalledWith(
+        "https://dev.azure.com/org/Proj/_workitems/edit/386900",
+      );
+    });
+
+    it("keeps my task on the card through later moves and creates nothing again", async () => {
+      queryItems = [
+        ...items,
+        item({ id: 21, title: "Story new", state: "New", boardColumn: "New" }),
+      ];
+      storeBoards([azureBoard()]);
+      await render();
+      await moveBy(
+        "#21",
+        "ArrowRight",
+        item({ id: 21, title: "Story new", state: "Active", boardColumn: "Active" }),
+      );
+      expect(createCalls()).toHaveLength(1);
+      expect(people("#21")).toEqual(["LM"]);
+
+      await moveBy(
+        "#21",
+        "ArrowRight",
+        item({ id: 21, title: "Story new", state: "Closed", boardColumn: "Closed" }),
+      );
+      expect(column("Closed").contains(card("#21"))).toBe(true);
+      expect(createCalls()).toHaveLength(1);
+      // The move's answer carries no children; the card keeps its own.
+      expect(people("#21")).toEqual(["LM"]);
+    });
+
+    it("does nothing for an item that was already underway", async () => {
+      storeBoards([azureBoard()]);
+      await render();
+      await moveBy(
+        "#10",
+        "ArrowLeft",
+        item({ id: 10, title: "Story ten", state: "New", boardColumn: "New", effort: 5 }),
+      );
+      expect(column("New").contains(card("#10"))).toBe(true);
+      expect(createCalls()).toHaveLength(0);
+      expect(toast()).toBeNull();
+    });
+
+    it("does nothing when I already hold an unfinished task on it", async () => {
+      queryChildren = {
+        ...children,
+        items: [
+          ...children.items,
+          {
+            id: 386901,
+            parentId: 20,
+            workItemType: "Task",
+            title: "Implementar",
+            state: "In Progress",
+            assignedTo: { ...me, imageUrl: null },
+            changedDate: "2026-10-18T10:00:00Z",
+            url: "",
+          },
+        ],
+      };
+      storeBoards([azureBoard()]);
+      await render();
+      expect(people("#20")).toEqual(["LM"]);
+      await moveBy("#20", "ArrowRight", bugActive());
+      expect(column("Active").contains(card("#20"))).toBe(true);
+      expect(createCalls()).toHaveLength(0);
+      expect(toast()).toBeNull();
+    });
+
+    it("does nothing when the board has the task turned off", async () => {
+      storeBoards([
+        { ...azureBoard(), autoTask: { enabled: false, title: "Em implementação" } },
+      ]);
+      await render();
+      await moveBy("#20", "ArrowRight", bugActive());
+      expect(column("Active").contains(card("#20"))).toBe(true);
+      expect(createCalls()).toHaveLength(0);
+      expect(toast()).toBeNull();
+    });
+
+    it("uses the board's own task title", async () => {
+      storeBoards([
+        { ...azureBoard(), autoTask: { enabled: true, title: "Desenvolvimento" } },
+      ]);
+      await render();
+      await moveBy("#20", "ArrowRight", bugActive());
+      expect(createCalls()[0]![1]).toMatchObject({
+        request: { title: "Desenvolvimento" },
+      });
+    });
+
+    it("undoes the task: deletes it and takes me off the card", async () => {
+      storeBoards([azureBoard()]);
+      await render();
+      await moveBy("#20", "ArrowRight", bugActive());
+      expect(people("#20")).toEqual(["LM"]);
+      act(() => toastButton("Undo").click());
+      await flush();
+      expect(invoke).toHaveBeenCalledWith("azure_boards_delete_work_item", {
+        project: "Proj",
+        id: 386900,
+      });
+      expect(people("#20")).toEqual([]);
+      expect(card("#20").querySelector("[data-card-people]")).toBeNull();
+      const undone = toast("undone")!;
+      expect(undone.textContent).toContain("Task #386900 removed");
+      expect(undone.querySelector("button[aria-label='Dismiss']")).not.toBeNull();
+      expect(undone.textContent).not.toContain("Undo");
+      expect(liveRegion()).toContain("Removed Task #386900");
+      expect(column("Active").contains(card("#20"))).toBe(true);
+    });
+
+    it("keeps the task and says why when Undo fails", async () => {
+      deleteFails = true;
+      storeBoards([azureBoard()]);
+      await render();
+      await moveBy("#20", "ArrowRight", bugActive());
+      act(() => toastButton("Undo").click());
+      await flush();
+      expect(toast("created")!.textContent).toContain("TF400813");
+      expect(people("#20")).toEqual(["LM"]);
+      // It can be tried again.
+      deleteFails = false;
+      act(() => toastButton("Undo").click());
+      await flush();
+      expect(toast("undone")).not.toBeNull();
+      expect(people("#20")).toEqual([]);
+    });
+
+    it("shows an error with Retry when the task cannot be made, and the card stays put", async () => {
+      createOutcome = "error";
+      storeBoards([azureBoard()]);
+      await render();
+      await moveBy("#20", "ArrowRight", bugActive());
+      expect(column("Active").contains(card("#20"))).toBe(true);
+      const failed = toast("error")!;
+      expect(failed.textContent).toContain(
+        "Couldn't create a task for #20: TF401320: Rule error for field Area Path",
+      );
+      expect(people("#20")).toEqual([]);
+      expect(liveRegion()).toContain("Couldn't create a task for #20");
+
+      createOutcome = "created";
+      act(() => toastButton("Retry").click());
+      await flush();
+      expect(createCalls()).toHaveLength(2);
+      expect(toast("error")).toBeNull();
+      expect(toast("created")!.textContent).toContain("Created Task #386900");
+      expect(people("#20")).toEqual(["LM"]);
+      expect(document.querySelectorAll("[data-board-toast]")).toHaveLength(1);
+    });
+
+    it("dismisses a toast", async () => {
+      createOutcome = "error";
+      storeBoards([azureBoard()]);
+      await render();
+      await moveBy("#20", "ArrowRight", bugActive());
+      act(() => toast("error")!.querySelector<HTMLButtonElement>("[aria-label='Dismiss']")!.click());
+      expect(toast()).toBeNull();
+    });
+
+    it("says so when I already had a task on it", async () => {
+      createOutcome = "exists";
+      storeBoards([azureBoard()]);
+      await render();
+      await moveBy("#20", "ArrowRight", bugActive());
+      const exists = toast("exists")!;
+      expect(exists.textContent).toContain("You already have Task #386900 on #20");
+      expect([...exists.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
+        "",
+        "Open",
+      ]);
+      expect(people("#20")).toEqual(["LM"]);
+    });
+
+    it("saves the setting from the board's edit dialog", async () => {
+      storeBoards([azureBoard()]);
+      await render();
+      act(() =>
+        container.querySelector<HTMLButtonElement>('button[aria-label="Edit board"]')!.click(),
+      );
+      await flush();
+      const dialog = document.querySelector('[role="dialog"]')!;
+      const toggle = dialog.querySelector<HTMLButtonElement>(
+        'button[role="switch"][aria-label="Create my task when I pick up an item"]',
+      )!;
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+      expect(dialog.textContent).toContain("adds a child Task assigned to you");
+      const title = dialog.querySelector<HTMLInputElement>('input[aria-label="Task title"]')!;
+      expect(title.value).toBe("Em implementação");
+      expect(title.maxLength).toBe(120);
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      act(() => {
+        setValue.call(title, "  Dev  ");
+        title.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      act(() => toggle.click());
+      expect(dialog.querySelector('input[aria-label="Task title"]')).toBeNull();
+      act(() => toggle.click());
+      const save = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
+        (button) => button.textContent === "Save",
+      )!;
+      act(() => save.click());
+      await flush();
+      const saved = JSON.parse(localStorage.getItem(BOARDS_KEY)!)[0];
+      expect(saved.autoTask).toEqual({ enabled: true, title: "Dev" });
     });
   });
 });
