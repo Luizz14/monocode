@@ -38,17 +38,28 @@ export const BoardColumn = memo(function BoardColumn({
 }) {
   const label = columnAriaLabel(column, load);
   const dropKind = drop?.kind ?? null;
+  const local = column.target.provider === "local";
   return (
     <section
       data-board-column={column.id}
+      data-board-local={local ? "" : undefined}
       data-drop={dropKind ?? undefined}
       aria-label={label}
-      className={`flex max-h-full w-[272px] shrink-0 flex-col rounded-lg bg-content/[0.03] ring-1 transition-shadow ${
+      title={
+        local
+          ? "Kept only in MonoCode. Parking a card here does not change it in Azure DevOps."
+          : undefined
+      }
+      className={`flex max-h-full w-[272px] shrink-0 flex-col rounded-lg ring-1 transition-shadow ${
+        local ? "bg-transparent" : "bg-content/[0.03]"
+      } ${
         dropKind === "ok"
           ? "ring-2 ring-accent"
           : dropKind === "disallowed"
             ? "ring-2 ring-red-400/60"
-            : "ring-content/6"
+            : local
+              ? "ring-content/12"
+              : "ring-content/6"
       }`}
     >
       <header className="flex h-9 shrink-0 items-center gap-2 px-2.5">

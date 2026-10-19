@@ -45,6 +45,10 @@ const azure: AzureBoardConfig = {
     includeDone: false,
   },
   autoTask: { enabled: true, title: "Em implementação" },
+  localColumns: [
+    { id: "code-review", title: "Aguardando code review" },
+    { id: "homologacao", title: "Em homologação" },
+  ],
 };
 
 const linear: LinearBoardConfig = {
@@ -136,6 +140,7 @@ describe("board config storage", () => {
         includeDone: true,
       },
       autoTask: { enabled: true, title: "Em implementação" },
+      localColumns: azure.localColumns,
     });
     expect(
       parseBoardConfig({
@@ -154,6 +159,30 @@ describe("board config storage", () => {
         includeDone: false,
       },
     });
+  });
+
+  it("gives boards saved before local columns the defaults, and keeps an emptied list empty", () => {
+    const { localColumns: _columns, ...old } = azure;
+    expect(parseBoardConfig(old)).toEqual(azure);
+    const read = (localColumns: unknown) =>
+      (parseBoardConfig({ ...old, localColumns }) as AzureBoardConfig)
+        .localColumns;
+    expect(read([])).toEqual([]);
+    expect(
+      read([
+        { id: "a", title: "  Em teste  " },
+        { id: "a", title: "dup" },
+        { id: "", title: "no id" },
+        { id: "b", title: "" },
+        "junk",
+        { id: "c", title: "x".repeat(80) },
+      ]),
+    ).toEqual([
+      { id: "a", title: "Em teste" },
+      { id: "c", title: "x".repeat(40) },
+    ]);
+    expect(read(Array.from({ length: 9 }, (_, i) => ({ id: `c${i}`, title: `T${i}` })))).toHaveLength(6);
+    expect(newBoardConfig("azuredevops").localColumns).toEqual(azure.localColumns);
   });
 
   it("turns the pickup task on for boards saved before it existed", () => {

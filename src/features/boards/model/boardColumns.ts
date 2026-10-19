@@ -1,4 +1,5 @@
 import { resolveAzureMove, type AzureMoveChange } from "./azureBoards";
+import { canParkCard, isLocalColumnId } from "./boardLocalColumns";
 import { resolveLinearMove } from "./linearBoards";
 import {
   OTHER_COLUMN_ID,
@@ -134,9 +135,19 @@ export function dropVerdict(
   if (pending) {
     return { kind: "disallowed", reason: "This card is still moving" };
   }
+  // A local column takes any unfinished card and writes nothing.
+  if (column.target.provider === "local") {
+    return canParkCard(card)
+      ? { kind: "ok" }
+      : { kind: "disallowed", reason: "Finished items stay in their column" };
+  }
   const result = resolveBoardMove(snapshot, card, column);
   if ("plan" in result) return { kind: "ok" };
-  if (result.error === "same-column") return { kind: "same" };
+  if (result.error === "same-column") {
+    // A parked card going back to its own state's column: nothing to write,
+    // but it is a move the user can make.
+    return isLocalColumnId(card.columnId) ? { kind: "ok" } : { kind: "same" };
+  }
   return {
     kind: "disallowed",
     reason: disallowedReason(snapshot, card, column),

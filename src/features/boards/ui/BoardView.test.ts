@@ -451,7 +451,7 @@ async function render() {
 function column(title: string): HTMLElement {
   const found = [
     ...container.querySelectorAll<HTMLElement>("[data-board-column]"),
-  ].find((section) => section.querySelector("h3")?.textContent === title);
+  ].find((section) => section.querySelector("h3 > span")?.textContent === title);
   if (!found) throw new Error(`No column ${title}`);
   return found;
 }
@@ -574,7 +574,13 @@ describe("BoardView", () => {
     const titles = [
       ...container.querySelectorAll("[data-board-column] h3"),
     ].map((heading) => heading.textContent);
-    expect(titles).toEqual(["New", "Active", "Closed"]);
+    expect(titles).toEqual([
+      "New",
+      "Active",
+      "Aguardando code reviewMonoCode",
+      "Em homologaçãoMonoCode",
+      "Closed",
+    ]);
 
     const active = column("Active");
     expect(active.getAttribute("aria-label")).toBe(
@@ -1167,6 +1173,12 @@ describe("BoardView", () => {
       expect(createCalls()).toHaveLength(1);
       expect(people("#21")).toEqual(["LM"]);
 
+      // Past the two organizational columns, then into Closed.
+      pressKey(card("#21"), { key: "ArrowRight", altKey: true });
+      await flush();
+      pressKey(card("#21"), { key: "ArrowRight", altKey: true });
+      await flush();
+      expect(column("Em homologação").contains(card("#21"))).toBe(true);
       await moveBy(
         "#21",
         "ArrowRight",
@@ -1357,6 +1369,174 @@ describe("BoardView", () => {
       await flush();
       const saved = JSON.parse(localStorage.getItem(BOARDS_KEY)!)[0];
       expect(saved.autoTask).toEqual({ enabled: true, title: "Dev" });
+    });
+  });
+
+  describe("organizational columns", () => {
+    const moveCalls = () =>
+      invoke.mock.calls.filter(([command]) => command === "azure_boards_move");
+
+    it("parks a card without writing to Azure and remembers it", async () => {
+      storeBoards([azureBoard()]);
+      await render();
+      const parking = column("Aguardando code review");
+      expect(parking.dataset.boardLocal).toBe("");
+      pressKey(card("#10"), { key: "ArrowRight", altKey: true });
+      await flush();
+      expect(parking.contains(card("#10"))).toBe(true);
+      expect(moveCalls()).toHaveLength(0);
+      expect(liveRegion()).toContain(
+        "Moved #10 to Aguardando code review (MonoCode)",
+      );
+      // The card still shows its real state while parked.
+      expect(card("#10").textContent).toContain("Active");
+      expect(
+        JSON.parse(localStorage.getItem("monocode.boards.local.board-a")!),
+      ).toEqual({ "azuredevops:10": "local:code-review" });
+
+      // A remount reads the placement back.
+      await act(async () => root.unmount());
+      container.remove();
+      container = document.createElement("div");
+      document.body.append(container);
+      root = createRoot(container);
+      await render();
+      expect(column("Aguardando code review").contains(card("#10"))).toBe(true);
+    });
+
+    it("sends a parked card home without a write, and onward with one", async () => {
+      storeBoards([azureBoard()]);
+      localStorage.setItem(
+        "monocode.boards.local.board-a",
+        JSON.stringify({ "azuredevops:10": "local:homologacao" }),
+      );
+      await render();
+      expect(column("Em homologação").contains(card("#10"))).toBe(true);
+      // Left twice: past the other local column, then back into Active.
+      pressKey(card("#10"), { key: "ArrowLeft", altKey: true });
+      await flush();
+      expect(column("Aguardando code review").contains(card("#10"))).toBe(true);
+      pressKey(card("#10"), { key: "ArrowLeft", altKey: true });
+      await flush();
+      expect(column("Active").contains(card("#10"))).toBe(true);
+      expect(moveCalls()).toHaveLength(0);
+      expect(localStorage.getItem("monocode.boards.local.board-a")).toBeNull();
+
+      // Parked again, then on to Closed: a real move.
+      pressKey(card("#10"), { key: "ArrowRight", altKey: true });
+      await flush();
+      moveResult = deferred();
+      openMenu(card("#10"));
+      await flush();
+      const moveTo = [
+        ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+      ].find((button) => button.textContent?.includes("Move to…"))!;
+      act(() => moveTo.click());
+      await flush();
+      const closed = [
+        ...document.querySelectorAll<HTMLButtonElement>('[role="menuitemcheckbox"]'),
+      ].find((button) => button.textContent?.startsWith("Closed"))!;
+      act(() => closed.click());
+      await flush();
+      expect(moveCalls()).toHaveLength(1);
+      expect(invoke).toHaveBeenCalledWith(
+        "azure_boards_move",
+        expect.objectContaining({
+          request: expect.objectContaining({ id: 10, state: "Closed" }),
+        }),
+      );
+      await act(async () =>
+        moveResult!.resolve({
+          ...items[0]!,
+          rev: 2,
+          state: "Closed",
+          boardColumn: "Closed",
+        }),
+      );
+      await flush();
+      expect(column("Closed").contains(card("#10"))).toBe(true);
+      expect(localStorage.getItem("monocode.boards.local.board-a")).toBeNull();
+    });
+
+    it("does not create a task when a Proposed item is only parked", async () => {
+      storeBoards([azureBoard()]);
+      await render();
+      openMenu(card("#20"));
+      await flush();
+      const moveTo = [
+        ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+      ].find((button) => button.textContent?.includes("Move to…"))!;
+      act(() => moveTo.click());
+      await flush();
+      const homolog = [
+        ...document.querySelectorAll<HTMLButtonElement>('[role="menuitemcheckbox"]'),
+      ].find((button) => button.textContent?.startsWith("Em homologação"))!;
+      expect(homolog.disabled).toBe(false);
+      act(() => homolog.click());
+      await flush();
+      expect(column("Em homologação").contains(card("#20"))).toBe(true);
+      expect(
+        invoke.mock.calls.filter(([command]) => command === "azure_boards_create_child"),
+      ).toHaveLength(0);
+    });
+
+    it("edits the organizational columns from the board's dialog", async () => {
+      storeBoards([azureBoard()]);
+      await render();
+      const edit = container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Edit board"]',
+      )!;
+      act(() => edit.click());
+      await flush();
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+      const first = dialog.querySelector<HTMLInputElement>(
+        'input[aria-label="Organizational column 1"]',
+      )!;
+      expect(first.value).toBe("Aguardando code review");
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      act(() => {
+        setValue.call(first, "Code review");
+        first.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const remove = dialog.querySelector<HTMLButtonElement>(
+        'button[aria-label="Remove Em homologação"]',
+      )!;
+      act(() => remove.click());
+      const add = [...dialog.querySelectorAll("button")].find(
+        (button) => button.textContent === "Add column",
+      )!;
+      act(() => add.click());
+      await flush();
+      const third = dialog.querySelector<HTMLInputElement>(
+        'input[aria-label="Organizational column 2"]',
+      )!;
+      act(() => {
+        setValue.call(third, "Em teste");
+        third.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const save = [...dialog.querySelectorAll("button")].find(
+        (button) => button.textContent === "Save",
+      )!;
+      act(() => save.click());
+      await flush();
+      const saved = JSON.parse(localStorage.getItem(BOARDS_KEY)!)[0];
+      expect(saved.localColumns.map((c: { title: string }) => c.title)).toEqual([
+        "Code review",
+        "Em teste",
+      ]);
+      const titles = [
+        ...container.querySelectorAll("[data-board-column] h3"),
+      ].map((heading) => heading.textContent);
+      expect(titles).toEqual([
+        "New",
+        "Active",
+        "Code reviewMonoCode",
+        "Em testeMonoCode",
+        "Closed",
+      ]);
     });
   });
 });

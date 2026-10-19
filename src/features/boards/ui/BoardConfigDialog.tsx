@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { LAYER } from "../../../shared/lib/layers";
+import { X } from "../../../shared/ui/icons";
 import { Modal } from "../../../shared/ui/Modal";
 import {
   SearchableSelect,
@@ -36,6 +37,9 @@ import {
   DEFAULT_AUTO_TASK_TITLE,
   DEFAULT_BOARD_NAMES,
   MAX_AUTO_TASK_TITLE_LENGTH,
+  MAX_LOCAL_COLUMNS,
+  MAX_LOCAL_COLUMN_TITLE_LENGTH,
+  newLocalColumnId,
   MAX_BOARD_NAME_LENGTH,
   MAX_BOARD_TEXT_LENGTH,
   boardConfigIssue,
@@ -47,6 +51,7 @@ import {
   type AzureBoardConfig,
   type AzureBoardFilters,
   type AzureIterationFilter,
+  type BoardLocalColumn,
   type BoardConfig,
   type BoardProvider,
   type LinearBoardConfig,
@@ -348,6 +353,9 @@ function AzureBoardForm({
 }) {
   const [filters, setFilters] = useState<AzureBoardFilters>(initial.filters);
   const [autoTask, setAutoTask] = useState<AzureAutoTask>(initial.autoTask);
+  const [localColumns, setLocalColumns] = useState<BoardLocalColumn[]>(
+    initial.localColumns,
+  );
   const [name, setName] = useState(initial.name);
   const [nameEdited, setNameEdited] = useState(!isNew);
   const [link, setLink] = useState("");
@@ -498,6 +506,9 @@ function AzureBoardForm({
     name: trimName(shownName) || DEFAULT_BOARD_NAMES.azuredevops,
     filters: { ...filters, text: filters.text.trim() },
     autoTask: { ...autoTask, title: autoTask.title.trim() },
+    localColumns: localColumns
+      .map((column) => ({ ...column, title: column.title.trim() }))
+      .filter((column) => column.title),
   };
   const issue = boardConfigIssue(config);
   const canSave = issue === null && areaHints === null;
@@ -902,6 +913,61 @@ function AzureBoardForm({
           />
         </Field>
       ) : null}
+
+      <Field
+        label="Organizational columns"
+        hint="Kept only in MonoCode, after the work columns. Parking a card in one does not change it in Azure DevOps; the card keeps its real state."
+      >
+        <div role="group" aria-label="Organizational columns" className="flex flex-col gap-1.5">
+          {localColumns.map((column, index) => (
+            <div key={column.id} className="flex items-center gap-1.5">
+              <input
+                aria-label={`Organizational column ${index + 1}`}
+                className={FIELD}
+                value={column.title}
+                maxLength={MAX_LOCAL_COLUMN_TITLE_LENGTH}
+                autoComplete="off"
+                placeholder="Column title"
+                onChange={(event) =>
+                  setLocalColumns((current) =>
+                    current.map((entry) =>
+                      entry.id === column.id
+                        ? { ...entry, title: event.target.value }
+                        : entry,
+                    ),
+                  )
+                }
+              />
+              <button
+                type="button"
+                aria-label={`Remove ${column.title || "column"}`}
+                onClick={() =>
+                  setLocalColumns((current) =>
+                    current.filter((entry) => entry.id !== column.id),
+                  )
+                }
+                className="grid size-8 shrink-0 place-items-center rounded-md text-content/45 hover:bg-content/8 hover:text-content"
+              >
+                <X className="size-3.5" strokeWidth={2} />
+              </button>
+            </div>
+          ))}
+          {localColumns.length < MAX_LOCAL_COLUMNS ? (
+            <button
+              type="button"
+              onClick={() =>
+                setLocalColumns((current) => [
+                  ...current,
+                  { id: newLocalColumnId(), title: "" },
+                ])
+              }
+              className="self-start rounded-md px-2 py-1 text-[12px] text-content/60 hover:bg-content/8 hover:text-content"
+            >
+              Add column
+            </button>
+          ) : null}
+        </div>
+      </Field>
 
       <Field label="Name">
         <input

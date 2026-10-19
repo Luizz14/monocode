@@ -124,6 +124,20 @@ pick up an item**, or change the **Task title** (up to 120 characters). Boards
 saved before this existed have it on. The setting does not change what the board
 loads.
 
+## Organizational columns
+
+An Azure DevOps board also gets two columns that exist only in MonoCode,
+**Aguardando code review** and **Em homologação**, placed after the work
+columns. Dragging a card into one (or choosing it in **Move to…**) parks it
+there for organization: nothing changes in Azure DevOps, the card keeps its
+real state, shown as a small label on the card, and MonoCode remembers the
+placement for that board on this computer. Dragging the card back to its own
+state's column just un-parks it; dragging it to another state moves it in Azure
+as usual. A card that reaches a finished state leaves its organizational
+column on its own, and parking never creates a task.
+
+Edit the board to rename, remove or add these columns (up to six).
+
 ## Details
 
 Click a card, or press Enter or Space on a focused one, to open its details in a

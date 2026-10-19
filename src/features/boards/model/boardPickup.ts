@@ -13,7 +13,8 @@ export type PickupDecision =
         | "not-work-column"
         | "child-type"
         | "already-mine"
-        | "not-moved";
+        | "not-moved"
+        | "local";
     };
 
 /**
@@ -46,6 +47,8 @@ export function pickupDecision(
     before.stateCategory === "backlog" ||
     before.stateCategory === "triage";
   if (!proposed) return { kind: "skip", reason: "not-proposed" };
+  // Parking in a MonoCode-only column is organization, not taking the item.
+  if (column.target.provider === "local") return { kind: "skip", reason: "local" };
   if (column.category !== "inProgress") {
     return { kind: "skip", reason: "not-work-column" };
   }

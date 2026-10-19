@@ -133,6 +133,20 @@ describe("pickupDecision", () => {
     }
   });
 
+  it("skips parking in a MonoCode-only column", () => {
+    expect(
+      pickupDecision(
+        card(),
+        column({
+          id: "local:homologacao",
+          title: "Em homologação",
+          target: { provider: "local", localId: "homologacao" },
+        }),
+        config,
+      ),
+    ).toEqual({ kind: "skip", reason: "local" });
+  });
+
   it("skips a move that did not leave its column", () => {
     expect(
       pickupDecision(card({ columnId: "az:c2" }), column(), config),

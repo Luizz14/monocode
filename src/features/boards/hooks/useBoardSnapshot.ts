@@ -11,6 +11,14 @@ import { LINEAR_CHANGE_EVENT } from "../../inbox/model/linear";
 import { boardQueryKey } from "../model/boardConfigs";
 import { dropVerdict, groupCardsByColumn } from "../model/boardColumns";
 import { invalidateBoardDetail } from "../model/boardDetail";
+import {
+  applyLocalBoard,
+  canParkCard,
+  loadLocalPlacements,
+  prunedPlacements,
+  saveLocalPlacements,
+  type LocalPlacements,
+} from "../model/boardLocalColumns";
 import { filterBoardCards } from "../model/boardFilter";
 import { filterMineCards } from "../model/boardOwners";
 import { commitBoardMove, optimisticPlacement } from "../model/boardMoves";
@@ -137,12 +145,63 @@ export function useBoardSnapshot(
   const loadingSeqRef = useRef<number | null>(null);
   const pendingRef = useRef(new Set<string>());
 
-  const view = useMemo(
+  // The provider's board with moves applied, before local columns.
+  const baseView = useMemo(
     () =>
       state.epoch === epoch
         ? applyBoardMoves(state.snapshot, state.moves)
         : null,
     [state.epoch, epoch, state.snapshot, state.moves],
+  );
+  const baseViewRef = useRef(baseView);
+  baseViewRef.current = baseView;
+
+  // Where the user parked cards in this board's MonoCode-only columns.
+  const boardId = config?.id ?? null;
+  const [placements, setPlacements] = useState<LocalPlacements>(() =>
+    boardId ? loadLocalPlacements(boardId) : {},
+  );
+  const placementsRef = useRef(placements);
+  placementsRef.current = placements;
+  const placementsBoardRef = useRef(boardId);
+  if (placementsBoardRef.current !== boardId) {
+    placementsBoardRef.current = boardId;
+    const loaded = boardId ? loadLocalPlacements(boardId) : {};
+    placementsRef.current = loaded;
+    setPlacements(loaded);
+  }
+  const setPlacement = useCallback((key: string, columnId: string | null) => {
+    const id = placementsBoardRef.current;
+    const current = placementsRef.current;
+    if (columnId === null ? !(key in current) : current[key] === columnId) {
+      return;
+    }
+    const next: Record<string, string> = { ...current };
+    if (columnId === null) delete next[key];
+    else next[key] = columnId;
+    placementsRef.current = next;
+    setPlacements(next);
+    if (id) saveLocalPlacements(id, next);
+  }, []);
+  // A load can finish or drop a parked card; its placement goes with it.
+  useEffect(() => {
+    const pruned = prunedPlacements(
+      placementsRef.current,
+      state.snapshot,
+      configRef.current,
+    );
+    if (pruned !== placementsRef.current) {
+      placementsRef.current = pruned;
+      setPlacements(pruned);
+      if (placementsBoardRef.current) {
+        saveLocalPlacements(placementsBoardRef.current, pruned);
+      }
+    }
+  }, [state.snapshot]);
+
+  const view = useMemo(
+    () => applyLocalBoard(baseView, config, placements),
+    [baseView, config, placements],
   );
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -239,14 +298,32 @@ export function useBoardSnapshot(
       if (!board)
         return { status: "rejected", reason: "The board isn't loaded" };
       if (pendingRef.current.has(card.key)) return { status: "pending" };
-      const current =
+      const shown =
         board.cards.find((entry) => entry.key === card.key) ?? card;
       const column = board.columns.find((entry) => entry.id === columnId);
       if (!column) return { status: "rejected", reason: "That column is gone" };
-      const verdict = dropVerdict(board, current, column);
+      const verdict = dropVerdict(board, shown, column);
       if (verdict.kind === "same") return { status: "same" };
       if (verdict.kind === "disallowed") {
         return { status: "rejected", reason: verdict.reason };
+      }
+      // Parking: remembered here, nothing written to the provider.
+      if (column.target.provider === "local") {
+        if (!canParkCard(shown)) {
+          return { status: "rejected", reason: "Finished items stay in their column" };
+        }
+        setPlacement(card.key, column.id);
+        return { status: "moved", card: { ...shown, columnId: column.id }, column };
+      }
+      // The card as the provider has it: a parked card's real column.
+      const current =
+        baseViewRef.current?.cards.find((entry) => entry.key === card.key) ??
+        shown;
+      if (card.key in placementsRef.current) {
+        setPlacement(card.key, null);
+        if (current.columnId === column.id) {
+          return { status: "moved", card: current, column };
+        }
       }
       const moveEpoch = epochRef.current;
       pendingRef.current.add(card.key);
@@ -276,7 +353,7 @@ export function useBoardSnapshot(
         pendingRef.current.delete(card.key);
       }
     },
-    [],
+    [setPlacement],
   );
 
   const patchCard = useCallback((card: BoardCard) => {

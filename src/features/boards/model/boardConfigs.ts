@@ -5,6 +5,7 @@ import type {
   AzureBoardFilters,
   AzureIterationFilter,
   BoardConfig,
+  BoardLocalColumn,
   BoardProvider,
   LinearBoardConfig,
   LinearBoardFilters,
@@ -20,6 +21,18 @@ export const MAX_BOARD_TEXT_LENGTH = 200;
 
 export const MAX_AUTO_TASK_TITLE_LENGTH = 120;
 export const DEFAULT_AUTO_TASK_TITLE = "Em implementação";
+
+export const MAX_LOCAL_COLUMNS = 6;
+export const MAX_LOCAL_COLUMN_TITLE_LENGTH = 40;
+/** The team's two waiting rooms between development and acceptance. */
+export const DEFAULT_LOCAL_COLUMNS: readonly BoardLocalColumn[] = [
+  { id: "code-review", title: "Aguardando code review" },
+  { id: "homologacao", title: "Em homologação" },
+];
+
+export function newLocalColumnId(): string {
+  return `local-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
 
 export const DEFAULT_BOARD_NAMES: Record<BoardProvider, string> = {
   azuredevops: "Azure DevOps board",
@@ -88,6 +101,26 @@ function parseAutoTask(value: unknown): AzureAutoTask {
   };
 }
 
+/**
+ * Boards saved before local columns existed get the defaults; a saved empty
+ * list means the user removed them all and stays empty.
+ */
+function parseLocalColumns(value: unknown): BoardLocalColumn[] {
+  if (!Array.isArray(value)) return DEFAULT_LOCAL_COLUMNS.map((c) => ({ ...c }));
+  const seen = new Set<string>();
+  const columns: BoardLocalColumn[] = [];
+  for (const entry of value) {
+    const raw = record(entry);
+    const id = text(raw?.id, 64);
+    const title = text(raw?.title, MAX_LOCAL_COLUMN_TITLE_LENGTH);
+    if (!id || !title || seen.has(id)) continue;
+    seen.add(id);
+    columns.push({ id, title });
+    if (columns.length >= MAX_LOCAL_COLUMNS) break;
+  }
+  return columns;
+}
+
 function parseLinearFilters(raw: Record<string, unknown>): LinearBoardFilters {
   const teamIds = Array.isArray(raw.teamIds)
     ? [
@@ -132,6 +165,7 @@ export function parseBoardConfig(value: unknown): BoardConfig | null {
       provider,
       filters: parseAzureFilters(filters),
       autoTask: parseAutoTask(raw.autoTask),
+      localColumns: parseLocalColumns(raw.localColumns),
     };
   }
   return {
@@ -377,6 +411,7 @@ export function newBoardConfig(
         ...(filters as Partial<AzureBoardFilters>),
       },
       autoTask: { enabled: true, title: DEFAULT_AUTO_TASK_TITLE },
+      localColumns: DEFAULT_LOCAL_COLUMNS.map((column) => ({ ...column })),
     };
   }
   return {

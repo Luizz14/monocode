@@ -201,6 +201,20 @@ export const BoardCard = memo(function BoardCard({
             />
           )}
           <span className="min-w-0 truncate tabular-nums">{card.ref}</span>
+          {column?.target.provider === "local" ? (
+            // Parked here for organization: the real state stays visible.
+            <span
+              title={`State in Azure DevOps: ${card.state}`}
+              className="min-w-0 truncate rounded px-1 py-px text-[10px] text-content/55 ring-1 ring-content/10"
+              style={
+                card.stateColor
+                  ? { boxShadow: `inset 2px 0 0 ${card.stateColor}` }
+                  : undefined
+              }
+            >
+              {card.state}
+            </span>
+          ) : null}
           <span className="ml-auto flex shrink-0 items-center gap-1.5">
             {card.provider === "linear" && card.priority ? (
               <LinearPriorityGlyph priority={card.priority} />

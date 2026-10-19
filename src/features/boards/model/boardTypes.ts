@@ -143,11 +143,19 @@ export type AzureAutoTask = {
   title: string;
 };
 
+/** A column that exists only in MonoCode, for organizing work in flight. */
+export type BoardLocalColumn = {
+  id: string;
+  title: string;
+};
+
 export type AzureBoardConfig = BoardConfigBase & {
   provider: "azuredevops";
   filters: AzureBoardFilters;
   /** Behavior, not a query: it never changes what the board loads. */
   autoTask: AzureAutoTask;
+  /** Organizational columns spliced in after the work columns. */
+  localColumns: BoardLocalColumn[];
 };
 
 export type LinearBoardConfig = BoardConfigBase & {
@@ -183,8 +191,14 @@ export type LinearColumnTarget = {
   statesByTeam: Record<string, LinearColumnState>;
 };
 
+/** An organizational column kept only in MonoCode; parking writes nothing. */
+export type LocalColumnTarget = { provider: "local"; localId: string };
+
 export type BoardColumnTarget =
-  AzureColumnTarget | LinearColumnTarget | { provider: "none" };
+  | AzureColumnTarget
+  | LinearColumnTarget
+  | LocalColumnTarget
+  | { provider: "none" };
 
 export type BoardColumn = {
   id: string;
