@@ -8,6 +8,7 @@ import {
 } from "../../inbox/model/inboxSelfActivity";
 import { LINEAR_CHANGE_EVENT } from "../../inbox/model/linear";
 import type {
+  AzureBoardChildren,
   AzureBoardItem,
   AzureBoardLayout,
   AzureTeamSetup,
@@ -234,6 +235,54 @@ let linearIsConnected: boolean;
 let board: AzureBoardLayout | null;
 let teamSetup: AzureTeamSetup;
 let movedItem: AzureBoardItem;
+let childrenResult: AzureBoardChildren | Error;
+
+const azureChildren: AzureBoardChildren = {
+  items: [
+    {
+      id: 386818,
+      parentId: 211,
+      workItemType: "Task",
+      title: "Em implementação",
+      state: "Completed",
+      assignedTo: {
+        id: "u-me",
+        displayName: "Luiz Gustavo Moura",
+        uniqueName: "luiz@example.com",
+        imageUrl: null,
+      },
+      changedDate: "2026-10-16T17:18:16Z",
+      url: "https://dev.azure.com/BaneseAgile/TI%20Banese/_workitems/edit/386818",
+    },
+    {
+      id: 386819,
+      parentId: 211,
+      workItemType: "Task",
+      title: "Revisão",
+      state: "Removed",
+      assignedTo: {
+        id: "u-t",
+        displayName: "Tiago",
+        uniqueName: "",
+        imageUrl: null,
+      },
+      changedDate: "2026-10-17T10:00:00Z",
+      url: "",
+    },
+  ],
+  types: [
+    {
+      name: "Task",
+      states: [
+        { name: "Defined", color: "b2b2b2", category: "Proposed" },
+        { name: "In Progress", color: "007acc", category: "InProgress" },
+        { name: "Completed", color: "339933", category: "Completed" },
+        { name: "Removed", color: "ffffff", category: "Removed" },
+      ],
+    },
+  ],
+  truncated: false,
+};
 
 const azureFilters = {
   project: "TI Banese",
@@ -268,6 +317,7 @@ function commands(): string[] {
 
 beforeEach(() => {
   clearBoardCaches();
+  childrenResult = azureChildren;
   clearPendingInboxSelfActivity();
   azureConnected = true;
   linearIsConnected = true;
@@ -294,6 +344,15 @@ beforeEach(() => {
         return { board, types };
       case "azure_boards_query":
         return { items: azureItems, truncated: false };
+      case "azure_boards_children":
+        if (childrenResult instanceof Error) throw childrenResult;
+        return childrenResult;
+      case "azure_boards_me":
+        return {
+          id: "u-me",
+          displayName: "Luiz Gustavo Moura",
+          uniqueName: "luiz@example.com",
+        };
       case "azure_boards_areas":
         return [AREA];
       case "azure_boards_move":
@@ -327,7 +386,13 @@ describe("loadBoardSnapshot for Azure DevOps", () => {
       "azure_boards_team_setup",
       "azure_boards_board",
       "azure_boards_query",
+      "azure_boards_children",
+      "azure_boards_me",
     ]);
+    expect(invoke).toHaveBeenCalledWith("azure_boards_children", {
+      project: "TI Banese",
+      parentIds: [211, 193],
+    });
     expect(invoke).toHaveBeenCalledWith("azure_boards_team_setup", {
       project: "TI Banese",
       team: "SUTEC App Banese",
@@ -359,6 +424,45 @@ describe("loadBoardSnapshot for Azure DevOps", () => {
       },
     });
     expect(snapshot.iterationTitle).toContain("TI Banese\\Sprint 42");
+    expect(snapshot.azure?.me).toEqual({
+      id: "u-me",
+      name: "Luiz Gustavo Moura",
+      isMe: true,
+    });
+    const [story, bug] = snapshot.cards;
+    // The story is held by whoever is on its children; the removed child is
+    // ignored and the connected user is marked.
+    expect(story!.owners).toMatchObject({
+      primary: { id: "u-me", name: "Luiz Gustavo Moura", isMe: true },
+      others: [],
+      source: "children",
+    });
+    expect(story!.children?.map((child) => child.id)).toEqual([
+      386819, 386818,
+    ]);
+    expect(story!.children?.[0]?.stateCategory).toBe("canceled");
+    expect(bug!.children).toEqual([]);
+    expect(bug!.owners).toBeUndefined();
+  });
+
+  it("keeps the board usable when the children request fails", async () => {
+    childrenResult = new Error("TF400898");
+    const snapshot = await loadBoardSnapshot(azureConfig());
+    const [story] = snapshot.cards;
+    expect(story!.children).toBeUndefined();
+    expect(story!.owners).toBeUndefined();
+    expect(snapshot.azure?.me?.id).toBe("u-me");
+    expect(snapshot.azure?.childrenTruncated).toBeUndefined();
+  });
+
+  it("skips the children request for an empty board and flags truncation", async () => {
+    childrenResult = { ...azureChildren, truncated: true };
+    const snapshot = await loadBoardSnapshot(azureConfig());
+    expect(snapshot.azure?.childrenTruncated).toBe(true);
+    vi.mocked(invoke).mockClear();
+    teamSetup = { ...setup, currentIteration: null };
+    await loadBoardSnapshot(azureConfig(), "all");
+    expect(commands()).not.toContain("azure_boards_children");
   });
 
   it("uses state columns when the team has no board", async () => {
@@ -432,7 +536,12 @@ describe("snapshot cache", () => {
     expect(await loadBoardSnapshot(config)).toBe(first);
     expect(invoke).not.toHaveBeenCalled();
     await loadBoardSnapshot(config, "items");
-    expect(commands()).toEqual(["azure_devops_status", "azure_boards_query"]);
+    // The user's identity stays cached across item refreshes.
+    expect(commands()).toEqual([
+      "azure_devops_status",
+      "azure_boards_query",
+      "azure_boards_children",
+    ]);
     vi.mocked(invoke).mockClear();
     await loadBoardSnapshot(config, "all");
     expect(commands()).toEqual([
@@ -440,6 +549,8 @@ describe("snapshot cache", () => {
       "azure_boards_team_setup",
       "azure_boards_board",
       "azure_boards_query",
+      "azure_boards_children",
+      "azure_boards_me",
     ]);
   });
 

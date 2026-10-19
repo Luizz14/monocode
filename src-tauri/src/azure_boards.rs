@@ -1081,7 +1081,9 @@ fn my_children_link_wiql(query: &AzureBoardQuery) -> Result<String, String> {
 }
 
 /// Proposed board items that someone took through an assigned child, or
-/// `None` when the board's types have no known Proposed states.
+/// `None` when the board's types have no known Proposed states. A removed
+/// child does not take the item; `Removed` is the state's name in every
+/// built-in process.
 fn taken_proposed_link_wiql(query: &AzureBoardQuery) -> Result<Option<String>, String> {
     let Some(proposed) = proposed_clause(query, "[Source].") else {
         return Ok(None);
@@ -1090,7 +1092,7 @@ fn taken_proposed_link_wiql(query: &AzureBoardQuery) -> Result<Option<String>, S
     source.push(proposed);
     Ok(Some(link_wiql(
         &source,
-        "[Target].[System.AssignedTo] <> ''",
+        "[Target].[System.AssignedTo] <> '' AND [Target].[System.State] <> 'Removed'",
     )))
 }
 
@@ -2790,7 +2792,10 @@ mod tests {
             "AND (([Source].[System.WorkItemType] = 'User Story' AND [Source].[System.State] IN ('New')) OR \
              ([Source].[System.WorkItemType] = 'Bug' AND [Source].[System.State] IN ('New')))) AND"
         ));
-        assert!(taken.ends_with("([Target].[System.AssignedTo] <> '') MODE (MustContain)"));
+        assert!(taken.ends_with(
+            "([Target].[System.AssignedTo] <> '' AND [Target].[System.State] <> 'Removed') \
+             MODE (MustContain)"
+        ));
         let mut stateless = query.clone();
         stateless.types = vec![AzureWorkItemTypeStates {
             name: "Bug".into(),

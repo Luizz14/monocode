@@ -38,6 +38,28 @@ const cards = [
     tags: [{ name: "iOS" }],
   }),
   card({ number: 1234, title: "Flutter upgrade", state: "New" }),
+  card({
+    number: 376073,
+    title: "Menu ajuda",
+    assignee: { name: "Vanessa Alves" },
+    owners: {
+      primary: { id: "u-l", name: "Luiz Gustavo Moura" },
+      others: [{ id: "u-t", name: "Tiago Mendonca" }],
+      source: "children",
+    },
+    children: [
+      {
+        id: 386818,
+        title: "Em implementação",
+        type: "Task",
+        state: "Completed",
+        stateCategory: "done",
+        assignee: { id: "u-l", name: "Luiz Gustavo Moura" },
+        updatedAt: "2026-10-16T17:18:16Z",
+        url: "",
+      },
+    ],
+  }),
 ];
 
 const numbers = (list: readonly BoardCard[]) =>
@@ -61,6 +83,15 @@ describe("filterBoardCards", () => {
     expect(numbers(filterBoardCards(cards, "new"))).toEqual([1234]);
     expect(numbers(filterBoardCards(cards, "santos"))).toEqual([123]);
     expect(numbers(filterBoardCards(cards, "sprint 42"))).toEqual([123]);
+  });
+
+  it("matches the people holding the card through its children", () => {
+    expect(numbers(filterBoardCards(cards, "gustavo"))).toEqual([376073]);
+    expect(numbers(filterBoardCards(cards, "tiago"))).toEqual([376073]);
+    expect(numbers(filterBoardCards(cards, "vanessa"))).toEqual([376073]);
+    expect(numbers(filterBoardCards(cards, "em implementacao"))).toEqual([
+      376073,
+    ]);
   });
 
   it("requires every token", () => {

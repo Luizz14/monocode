@@ -10,7 +10,9 @@ import { AZUREDEVOPS_CHANGE_EVENT } from "../../inbox/model/azureDevOps";
 import { LINEAR_CHANGE_EVENT } from "../../inbox/model/linear";
 import { boardQueryKey } from "../model/boardConfigs";
 import { dropVerdict, groupCardsByColumn } from "../model/boardColumns";
+import { invalidateBoardDetail } from "../model/boardDetail";
 import { filterBoardCards } from "../model/boardFilter";
+import { filterMineCards } from "../model/boardOwners";
 import { commitBoardMove, optimisticPlacement } from "../model/boardMoves";
 import {
   BoardLoadError,
@@ -45,6 +47,8 @@ export type UseBoardSnapshotOptions = {
   paused?: boolean;
   /** Quick search from the toolbar, applied on top of the board's saved text. */
   search?: string;
+  /** The toolbar's "Mine" chip: cards the user holds, plus untaken Proposed ones. */
+  mine?: boolean;
 };
 
 export type BoardMoveOutcome =
@@ -100,6 +104,7 @@ export function useBoardSnapshot(
 ): UseBoardSnapshot {
   const paused = options.paused === true;
   const search = options.search ?? "";
+  const mine = options.mine === true;
   const epoch = boardEpoch(config);
   const [state, dispatch] = useReducer(boardReducer, null, () =>
     initialBoardState(epoch, config ? peekBoardSnapshot(config) : null),
@@ -245,6 +250,7 @@ export function useBoardSnapshot(
       try {
         const next = await commitBoardMove(board, current, column);
         patchCachedBoardCard(board.configId, next);
+        if (board.azure) invalidateBoardDetail(board.azure.project, next.number);
         if (epochRef.current !== moveEpoch) return { status: "stale" };
         dispatch({ type: "move-success", seq: ++seqRef.current, card: next });
         return {
@@ -273,9 +279,12 @@ export function useBoardSnapshot(
   const visibleCards = useMemo(
     () =>
       view
-        ? filterBoardCards(filterBoardCards(view.cards, savedText), search)
+        ? filterMineCards(
+            filterBoardCards(filterBoardCards(view.cards, savedText), search),
+            mine,
+          )
         : [],
-    [view, savedText, search],
+    [view, savedText, search, mine],
   );
   const grouped = useMemo(
     () =>

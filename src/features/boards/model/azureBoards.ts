@@ -12,8 +12,10 @@ import {
   type AzureStateInfo,
   type AzureStateMeta,
   type BoardCard,
+  type BoardCardChild,
   type BoardColumn,
   type BoardMoveRejection,
+  type BoardPerson,
   type BoardStateCategory,
 } from "./boardTypes";
 
@@ -106,6 +108,14 @@ export type AzureBoardQuery = {
   limit: number;
 };
 
+export type AzureBoardAssignee = {
+  /** Identity id; empty when Azure only gave a name. */
+  id: string;
+  displayName: string;
+  uniqueName: string;
+  imageUrl: string | null;
+};
+
 export type AzureBoardItem = {
   id: number;
   rev: number;
@@ -113,11 +123,7 @@ export type AzureBoardItem = {
   title: string;
   state: string;
   reason: string | null;
-  assignedTo: {
-    displayName: string;
-    uniqueName: string;
-    imageUrl: string | null;
-  } | null;
+  assignedTo: AzureBoardAssignee | null;
   tags: string[];
   effort: number | null;
   order: number | null;
@@ -134,6 +140,94 @@ export type AzureBoardItem = {
 export type AzureBoardQueryResult = {
   items: AzureBoardItem[];
   truncated: boolean;
+};
+
+export type AzureBoardChild = {
+  id: number;
+  parentId: number;
+  workItemType: string;
+  title: string;
+  state: string;
+  assignedTo: AzureBoardAssignee | null;
+  changedDate: string;
+  url: string;
+};
+
+export type AzureBoardChildren = {
+  items: AzureBoardChild[];
+  /** States of the child types found, for their categories. */
+  types: AzureWorkItemTypeStates[];
+  truncated: boolean;
+};
+
+/** The identity behind the PAT. */
+export type AzureBoardsUser = {
+  id: string;
+  displayName: string;
+  uniqueName: string;
+};
+
+export type AzureWorkItemField = {
+  referenceName: string;
+  label: string;
+  value: string;
+  /** `text`, `number`, `bool`, `date` or `identity`. */
+  kind: string;
+};
+
+export type AzureHtmlSection = {
+  referenceName: string;
+  label: string;
+  html: string;
+};
+
+export type AzureRelatedItem = {
+  id: number;
+  /** `Parent`, `Child`, `Related`, `Predecessor`... */
+  link: string;
+  workItemType: string;
+  title: string;
+  state: string;
+  assignedTo: AzureBoardAssignee | null;
+  changedDate: string;
+  url: string;
+};
+
+export type AzureWorkItemRelations = {
+  parent: AzureRelatedItem | null;
+  children: AzureRelatedItem[];
+  related: AzureRelatedItem[];
+  pullRequests: number;
+  commits: number;
+  attachments: string[];
+  truncated: boolean;
+};
+
+export type AzureWorkItemDetail = {
+  id: number;
+  rev: number;
+  workItemType: string;
+  title: string;
+  state: string;
+  reason: string;
+  project: string;
+  assignedTo: AzureBoardAssignee | null;
+  createdBy: AzureBoardAssignee | null;
+  changedBy: AzureBoardAssignee | null;
+  createdDate: string;
+  changedDate: string;
+  areaPath: string;
+  iterationPath: string;
+  tags: string[];
+  commentCount: number;
+  /** Azure's HTML; render through `SafeHtml` only. */
+  descriptionHtml: string;
+  sections: AzureHtmlSection[];
+  planning: AzureWorkItemField[];
+  storyPoints: number | null;
+  priority: number | null;
+  relations: AzureWorkItemRelations;
+  url: string;
 };
 
 export type AzureBoardMoveRequest = {
@@ -168,6 +262,8 @@ const metaCache = new Map<string, Entry<AzureBoardMeta>>();
 const metaInflight = new Map<string, Promise<AzureBoardMeta>>();
 const areaCache = new Map<string, Entry<string[]>>();
 const areaInflight = new Map<string, Promise<string[]>>();
+const meCache = new Map<string, Entry<AzureBoardsUser>>();
+const meInflight = new Map<string, Promise<AzureBoardsUser>>();
 
 /** TTL cache with one shared request per key; a clear drops late answers. */
 function cachedCall<T>(
@@ -211,6 +307,8 @@ export function clearAzureBoardsCache() {
   metaInflight.clear();
   areaCache.clear();
   areaInflight.clear();
+  meCache.clear();
+  meInflight.clear();
 }
 
 export function listAzureProjects(): Promise<AzureNamedRef[]> {
@@ -287,6 +385,36 @@ export function moveAzureCard(
   request: AzureBoardMoveRequest,
 ): Promise<AzureBoardItem> {
   return invoke<AzureBoardItem>("azure_boards_move", { request });
+}
+
+/** Children of the given board items, in one flat WIQL per chunk of parents. */
+export function azureBoardChildren(
+  project: string,
+  parentIds: readonly number[],
+): Promise<AzureBoardChildren> {
+  return invoke<AzureBoardChildren>("azure_boards_children", {
+    project: project.trim(),
+    parentIds: [...parentIds],
+  });
+}
+
+/** The connected user; cached, since the PAT's identity does not change. */
+export function azureBoardsMe(options?: {
+  force?: boolean;
+}): Promise<AzureBoardsUser> {
+  return cachedCall(meCache, meInflight, "me", options?.force === true, () =>
+    invoke<AzureBoardsUser>("azure_boards_me"),
+  );
+}
+
+export function azureWorkItemDetail(
+  project: string,
+  id: number,
+): Promise<AzureWorkItemDetail> {
+  return invoke<AzureWorkItemDetail>("azure_boards_work_item", {
+    project: project.trim(),
+    id,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -533,6 +661,37 @@ export function azureCardColumnId(
   return any?.id ?? OTHER_COLUMN_ID;
 }
 
+/** Name and id only: the avatar URL needs the PAT, so it is never kept. */
+export function azurePerson(
+  assignee: AzureBoardAssignee | null | undefined,
+): BoardPerson | undefined {
+  const name = assignee?.displayName.trim();
+  if (!name) return undefined;
+  const person: BoardPerson = { name };
+  const id = assignee?.id?.trim();
+  if (id) person.id = id;
+  return person;
+}
+
+export function azureChildToCardChild(
+  child: AzureBoardChild,
+  info: AzureStateInfo,
+): BoardCardChild {
+  const meta = azureStateMeta(info, child.workItemType, child.state);
+  const entry: BoardCardChild = {
+    id: child.id,
+    title: child.title,
+    type: child.workItemType,
+    state: child.state,
+    stateCategory: meta?.category ?? "unknown",
+    updatedAt: child.changedDate,
+    url: child.url,
+  };
+  const assignee = azurePerson(child.assignedTo);
+  if (assignee) entry.assignee = assignee;
+  return entry;
+}
+
 export function azureItemToCard(
   item: AzureBoardItem,
   columns: readonly BoardColumn[],
@@ -564,9 +723,8 @@ export function azureItemToCard(
   };
   if (meta?.color) card.stateColor = meta.color;
   if (item.boardColumn) card.boardColumn = item.boardColumn;
-  // The avatar URL needs the PAT, so only the name is kept.
-  const name = item.assignedTo?.displayName.trim();
-  if (name) card.assignee = { name };
+  const assignee = azurePerson(item.assignedTo);
+  if (assignee) card.assignee = assignee;
   if (item.effort != null) card.effort = item.effort;
   if (item.priority != null) {
     card.priority = {

@@ -189,6 +189,38 @@ export type BoardColumn = {
 
 export type BoardCardTag = { name: string; color?: string };
 
+export type BoardPerson = {
+  /** Provider identity id; absent when the provider only gave a name. */
+  id?: string;
+  name: string;
+  avatarUrl?: string;
+  /** The connected user. */
+  isMe?: boolean;
+};
+
+/** A child work item (Azure Task, Test...) of a card. */
+export type BoardCardChild = {
+  id: number;
+  title: string;
+  type: string;
+  state: string;
+  stateCategory: BoardStateCategory;
+  assignee?: BoardPerson;
+  updatedAt: string;
+  url: string;
+};
+
+/**
+ * Who holds the card. On teams that take a story by creating a child task,
+ * the people on the children are the real owners; the card's own Assigned
+ * To is the fallback when no child names anyone.
+ */
+export type BoardCardOwners = {
+  primary: BoardPerson;
+  others: BoardPerson[];
+  source: "children" | "assignee";
+};
+
 export type BoardCard = {
   provider: BoardProvider;
   /** `${provider}:${id}`. */
@@ -212,7 +244,11 @@ export type BoardCard = {
   columnId: string;
   boardColumn?: string;
   boardColumnDone?: boolean;
-  assignee?: { name: string; avatarUrl?: string };
+  assignee?: BoardPerson;
+  /** Resolved by `resolveBoardOwners`; absent when nobody holds the card. */
+  owners?: BoardCardOwners;
+  /** Azure children, newest change first; absent when not loaded. */
+  children?: BoardCardChild[];
   effort?: number;
   tags: BoardCardTag[];
   priority?: { value: number; label: string };
@@ -284,6 +320,10 @@ export type BoardSnapshot = {
     orderField: string | null;
     effortField: string | null;
     stateInfo: AzureStateInfo;
+    /** The connected user, when Azure reported one. */
+    me?: BoardPerson;
+    /** Children past the cap were not loaded, so some owners are incomplete. */
+    childrenTruncated?: boolean;
   };
   linear?: {
     teams: LinearBoardTeam[];

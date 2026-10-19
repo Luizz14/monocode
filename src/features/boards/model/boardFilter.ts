@@ -19,6 +19,9 @@ function searchText(card: BoardCard): string {
         card.state,
         ...card.tags.map((tag) => tag.name),
         card.assignee?.name ?? "",
+        card.owners?.primary.name ?? "",
+        ...(card.owners?.others.map((person) => person.name) ?? []),
+        ...(card.children?.map((child) => child.title) ?? []),
         card.iteration ?? "",
       ].join("\n"),
     );
@@ -33,8 +36,8 @@ export function boardFilterTokens(query: string): string[] {
 
 /**
  * Cards matching every whitespace-separated token of `query` in their ref,
- * number, title, type, state, tags, assignee or iteration. An empty query
- * returns the same array.
+ * number, title, type, state, tags, assignee, owners, children's titles or
+ * iteration. An empty query returns the same array.
  */
 export function filterBoardCards(
   cards: readonly BoardCard[],

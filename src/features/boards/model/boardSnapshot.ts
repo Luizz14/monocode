@@ -6,8 +6,11 @@ import { LINEAR_CHANGE_EVENT, linearConnected } from "../../inbox/model/linear";
 import {
   AZURE_BOARD_LIMIT,
   AZURE_NO_ITERATION_NOTICE,
+  azureBoardChildren,
   azureBoardMeta,
+  azureBoardsMe,
   azureBoardWebUrl,
+  azureChildToCardChild,
   azureItemToCard,
   azureQueryArgs,
   azureStateInfo,
@@ -17,14 +20,20 @@ import {
   clearAzureBoardsCache,
   pickBacklogLevel,
   queryAzureBoard,
+  type AzureBoardChildren,
+  type AzureBoardsUser,
   type AzureIteration,
 } from "./azureBoards";
 import { boardConfigIssue, boardQueryKey } from "./boardConfigs";
 import { withOtherColumn } from "./boardColumns";
+import { clearBoardDetailCache } from "./boardDetail";
+import { attachBoardChildren, groupChildrenByParent } from "./boardOwners";
 import type {
   AzureBoardConfig,
   BoardCard,
+  BoardCardChild,
   BoardConfig,
+  BoardPerson,
   BoardProvider,
   BoardSnapshot,
   LinearBoardConfig,
@@ -92,7 +101,10 @@ export function clearBoardCaches(provider?: BoardProvider) {
     if (!provider || snapshot.provider === provider) snapshots.delete(id);
   }
   inflight.clear();
-  if (!provider || provider === "azuredevops") clearAzureBoardsCache();
+  if (!provider || provider === "azuredevops") {
+    clearAzureBoardsCache();
+    clearBoardDetailCache();
+  }
   if (!provider || provider === "linear") clearLinearBoardsCache();
 }
 
@@ -269,16 +281,64 @@ async function loadAzure(
   if ("error" in args) return { ...base, notice: args.error };
 
   const result = await queryAzureBoard(args.query);
-  const cards = result.items.map((item, index) =>
+  const plain = result.items.map((item, index) =>
     azureItemToCard(item, columns, stateInfo, index),
   );
+  // Children and the user's identity complete the owners. Either failing
+  // leaves the board usable with the plain Assigned To.
+  const [children, me] = await Promise.all([
+    plain.length > 0
+      ? azureBoardChildren(
+          project,
+          plain.map((card) => card.number),
+        ).catch(() => null)
+      : Promise.resolve<AzureBoardChildren | null>(null),
+    azureBoardsMe({ force }).catch(() => null),
+  ]);
+  const cards = attachAzureChildren(plain, children, me);
+  const azure = { ...base.azure! };
+  const mePerson = azureMePerson(me);
+  if (mePerson) azure.me = mePerson;
+  if (children?.truncated) azure.childrenTruncated = true;
   return {
     ...base,
+    azure,
     columns: withOtherColumn(columns, cards),
     cards,
     truncated: result.truncated,
     fetchedAt: Date.now(),
   };
+}
+
+function azureMePerson(me: AzureBoardsUser | null): BoardPerson | undefined {
+  const name = me?.displayName.trim();
+  const id = me?.id.trim();
+  if (!id && !name) return undefined;
+  const person: BoardPerson = { name: name || id || "", isMe: true };
+  if (id) person.id = id;
+  return person;
+}
+
+function attachAzureChildren(
+  cards: readonly BoardCard[],
+  children: AzureBoardChildren | null,
+  me: AzureBoardsUser | null,
+): BoardCard[] {
+  const childInfo = azureStateInfo(children?.types ?? []);
+  const byParent = groupChildrenByParent(
+    children?.items ?? [],
+    (child) => child.changedDate,
+  );
+  const converted = new Map<number, BoardCardChild[]>();
+  for (const [parentId, items] of byParent) {
+    converted.set(
+      parentId,
+      items.map((child) => azureChildToCardChild(child, childInfo)),
+    );
+  }
+  return attachBoardChildren(cards, converted, azureMePerson(me), {
+    childrenLoaded: children !== null,
+  });
 }
 
 async function loadLinear(

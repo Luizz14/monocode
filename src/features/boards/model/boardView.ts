@@ -91,8 +91,17 @@ export function cardAriaLabel(
       ? `State ${card.state}`
       : `In ${where}, state ${card.state}`,
   );
-  if (card.assignee) parts.push(`Assigned to ${card.assignee.name}`);
-  else parts.push("Unassigned");
+  const owners = card.owners;
+  if (owners?.source === "children") {
+    const names = [owners.primary, ...owners.others]
+      .map((person) => person.name)
+      .join(", ");
+    parts.push(`With ${names}`);
+  } else if (card.assignee) {
+    parts.push(`Assigned to ${card.assignee.name}`);
+  } else {
+    parts.push("Unassigned");
+  }
   if (card.effort != null) {
     parts.push(`${card.effort} ${card.effort === 1 ? "point" : "points"}`);
   }
