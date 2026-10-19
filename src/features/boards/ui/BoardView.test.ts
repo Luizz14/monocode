@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AzureBoardChildren,
   AzureBoardItem,
+  AzureChildCreated,
   AzureBoardLayout,
   AzureTeamSetup,
   AzureWorkItemDetail,
@@ -326,6 +327,8 @@ let createOutcome: "created" | "exists" | "error";
 let deleteFails: boolean;
 let moveResult: Deferred<AzureBoardItem> | null;
 let detailFails: boolean;
+/** When set, `azure_boards_create_child` waits for it instead of answering. */
+let createResult: Deferred<AzureChildCreated> | null;
 let previewFails: boolean;
 let openFails: boolean;
 
@@ -369,6 +372,7 @@ function route(command: string, args?: unknown): unknown {
       if (createOutcome === "error") {
         throw new Error("TF401320: Rule error for field Area Path");
       }
+      if (createResult) return createResult.promise;
       const { request } = args as { request: { parentId: number } };
       return {
         created: createOutcome === "created",
@@ -505,6 +509,7 @@ beforeEach(() => {
   moveResult = null;
   invoke.mockReset();
   detailFails = false;
+  createResult = null;
   previewFails = false;
   openFails = false;
   invoke.mockImplementation(async (command: string, args?: unknown) =>
@@ -1107,6 +1112,44 @@ describe("BoardView", () => {
       expect(openUrl).toHaveBeenCalledWith(
         "https://dev.azure.com/org/Proj/_workitems/edit/386900",
       );
+    });
+
+    it("keeps a card I just moved on screen under Mine until its task arrives", async () => {
+      storeBoards([azureBoard()]);
+      await render();
+      const chip = [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "Mine",
+      )!;
+      act(() => chip.click());
+      await flush();
+      // #20 is New and free, so Mine shows it; moving it to Active would
+      // make it neither mine nor available until the task is on the card.
+      createResult = deferred();
+      moveResult = deferred();
+      pressKey(card("#20"), { key: "ArrowRight", altKey: true });
+      await flush();
+      await act(async () => moveResult!.resolve(bugActive()));
+      await flush();
+      expect(column("Active").contains(card("#20"))).toBe(true);
+      expect(people("#20")).toEqual([]);
+      await act(async () =>
+        createResult!.resolve({
+          created: true,
+          child: {
+            id: 386900,
+            parentId: 20,
+            workItemType: "Task",
+            title: "Em implementação",
+            state: "Defined",
+            assignedTo: { ...me, imageUrl: null },
+            changedDate: "2026-10-19T12:00:00Z",
+            url: "https://dev.azure.com/org/Proj/_workitems/edit/386900",
+          },
+        }),
+      );
+      await flush();
+      expect(column("Active").contains(card("#20"))).toBe(true);
+      expect(people("#20")).toEqual(["LM"]);
     });
 
     it("keeps my task on the card through later moves and creates nothing again", async () => {

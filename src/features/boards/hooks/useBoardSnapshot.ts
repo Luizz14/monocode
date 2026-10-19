@@ -292,15 +292,22 @@ export function useBoardSnapshot(
   }, []);
 
   const savedText = config?.filters.text ?? "";
+  // Cards with a move overlay stay in view under the Mine filter until a
+  // newer load replaces the overlay, by then with the task they got.
+  const movedKeys = useMemo(
+    () => new Set(Object.keys(state.moves)),
+    [state.moves],
+  );
   const visibleCards = useMemo(
     () =>
       view
         ? filterMineCards(
             filterBoardCards(filterBoardCards(view.cards, savedText), search),
             mine,
+            movedKeys,
           )
         : [],
-    [view, savedText, search, mine],
+    [view, savedText, search, mine, movedKeys],
   );
   const grouped = useMemo(
     () =>

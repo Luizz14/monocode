@@ -286,6 +286,11 @@ describe("isMineCard", () => {
       card({ number: 2, owners: { primary: tiago, others: [], source: "children" } }),
     ];
     expect(filterMineCards(cards, false)).toBe(cards);
+    expect(
+      filterMineCards(cards, true, new Set(["azuredevops:2"])).map(
+        (entry) => entry.number,
+      ),
+    ).toEqual([1, 2]);
     expect(filterMineCards(cards, true).map((entry) => entry.number)).toEqual([
       1,
     ]);

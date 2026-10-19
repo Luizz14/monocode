@@ -154,11 +154,19 @@ export function isMineCard(card: BoardCard): boolean {
   return card.stateCategory === "todo" && !cardTakenByChild(card);
 }
 
+/**
+ * `keep` holds cards that must stay whatever the rule says: the ones the
+ * user just moved. A story dragged out of Defined stops being "available"
+ * before its task exists, and vanishing under the user's hand reads as a
+ * failed move.
+ */
 export function filterMineCards(
   cards: readonly BoardCard[],
   on: boolean,
+  keep?: ReadonlySet<string>,
 ): readonly BoardCard[] {
-  return on ? cards.filter(isMineCard) : cards;
+  if (!on) return cards;
+  return cards.filter((card) => keep?.has(card.key) || isMineCard(card));
 }
 
 /** `Luiz · Em implementação (Completed)`, one line per child of `person`. */
