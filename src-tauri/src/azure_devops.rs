@@ -16,6 +16,10 @@ const MAX_DIFF_BYTES: usize = 2 * 1024 * 1024;
 const MAX_DIFF_FILE_BYTES: usize = 512 * 1024;
 /// Hunks render for the first N files; the rest stay listed without hunks.
 const MAX_DIFF_HUNK_FILES: usize = 40;
+/// Attachments are downloaded whole, so they get longer than a JSON call.
+const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(300);
+/// Enough of an error body to read Azure's `message`.
+const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 const USER_AGENT: &str = "MonoCode";
 pub(crate) const API_VERSION: &str = "7.1";
 const CONNECTION_DATA_API_VERSION: &str = "7.1-preview.1";
@@ -1712,6 +1716,54 @@ pub(crate) fn azure_patch_json_patch(
     }
 }
 
+/// Creates a work item (`POST .../workitems/$Type`) from JSON Patch ops. Same
+/// content type and auth messages as `azure_patch_json_patch`.
+pub(crate) fn azure_post_json_patch(
+    config: &AzureDevOpsConfig,
+    path: &str,
+    ops: &[Value],
+) -> Result<AzureResponse, String> {
+    let url = format!("{}{}", config.url.trim_end_matches('/'), path);
+    let payload = serde_json::to_string(ops).map_err(|error| error.to_string())?;
+    let result = azure_agent()
+        .post(&url)
+        .set("Authorization", &basic_auth(&config.token))
+        .set("Accept", "application/json")
+        .set("Content-Type", "application/json-patch+json")
+        .set("User-Agent", USER_AGENT)
+        .send_string(&payload);
+    match result {
+        Err(ureq::Error::Status(status @ (401 | 403), response)) => {
+            let body = response.into_string().unwrap_or_default();
+            Err(azure_write_http_error(status, &body))
+        }
+        other => read_azure_response(other),
+    }
+}
+
+/// DELETE; any 2xx is success and the body (the deleted item) is ignored.
+/// Azure moves the item to the recycle bin rather than destroying it.
+pub(crate) fn azure_delete(config: &AzureDevOpsConfig, path: &str) -> Result<(), String> {
+    let url = format!("{}{}", config.url.trim_end_matches('/'), path);
+    let result = azure_agent()
+        .request("DELETE", &url)
+        .set("Authorization", &basic_auth(&config.token))
+        .set("Accept", "application/json")
+        .set("User-Agent", USER_AGENT)
+        .call();
+    match result {
+        Ok(response) if (200..300).contains(&response.status()) => Ok(()),
+        Err(ureq::Error::Status(status @ (401 | 403), response)) => {
+            let body = response.into_string().unwrap_or_default();
+            Err(azure_write_http_error(status, &body))
+        }
+        other => {
+            let (bytes, status, _) = read_azure_bytes(other, Some(MAX_ERROR_BODY_BYTES))?;
+            Err(azure_http_error(status, &String::from_utf8_lossy(&bytes)))
+        }
+    }
+}
+
 fn azure_write_http_error(status: u16, body: &str) -> String {
     const REFUSED: &str = "Azure DevOps refused the update. Use a personal access token with the Work Items (Read & write) scope.";
     if status == 403 {
@@ -1815,6 +1867,42 @@ fn azure_get_bytes(config: &AzureDevOpsConfig, path: &str) -> Result<(Vec<u8>, b
         return Err(azure_http_error(status, &body));
     }
     Ok((bytes, truncated))
+}
+
+/// Raw bytes from a full URL that Azure itself handed out (an attachment
+/// link). The caller must have checked the URL against the organization
+/// first: the PAT goes with the request. Redirects stay off for the same
+/// reason. The cap is reported as `truncated` when the body is longer.
+pub(crate) fn azure_get_bytes_url(
+    config: &AzureDevOpsConfig,
+    full_url: &str,
+    max_bytes: Option<usize>,
+) -> Result<(Vec<u8>, bool), String> {
+    // A large attachment can take longer than the 20 s a JSON call gets.
+    let agent = ureq::AgentBuilder::new()
+        .timeout(ATTACHMENT_TIMEOUT)
+        .redirects(0)
+        .build();
+    let (mut bytes, status, truncated) = read_azure_bytes(
+        agent
+            .get(full_url)
+            .set("Authorization", &basic_auth(&config.token))
+            .set("Accept", "application/octet-stream")
+            .set("User-Agent", USER_AGENT)
+            .call(),
+        max_bytes,
+    )?;
+    if !(200..300).contains(&status) {
+        let body = String::from_utf8_lossy(&bytes);
+        return Err(azure_http_error(status, &body));
+    }
+    // The reader stops one byte past the cap, which is how it tells "exactly
+    // the cap" from "more than the cap".
+    let over = max_bytes.is_some_and(|max| bytes.len() > max);
+    if let (true, Some(max)) = (over, max_bytes) {
+        bytes.truncate(max);
+    }
+    Ok((bytes, truncated || over))
 }
 
 fn read_azure_bytes(

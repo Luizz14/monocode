@@ -2,16 +2,19 @@
 //! Reuses the Azure DevOps connection (`azure_devops.rs`) for auth and HTTP.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::AppHandle;
+use url::Url;
 
 use crate::azure_devops::{
-    azure_current_user, azure_get, azure_get_optional, azure_patch_json_patch, azure_post_json,
-    encode_segment, require_config, string_field, work_item_web_url, AzureDevOpsConfig,
-    AzureDevOpsUser, API_VERSION,
+    azure_current_user, azure_delete, azure_get, azure_get_bytes_url, azure_get_optional,
+    azure_patch_json_patch, azure_post_json, azure_post_json_patch, encode_segment, require_config,
+    string_field, work_item_web_url, AzureDevOpsConfig, AzureDevOpsUser, API_VERSION,
 };
 
 const DEFAULT_LIMIT: u32 = 500;
@@ -30,6 +33,16 @@ const MAX_IN_IDS: usize = 2000;
 const LINK_TOP: usize = 4000;
 /// Related work items resolved for the detail view.
 const MAX_RELATED: usize = 200;
+/// Largest image the detail view will inline as a data URL.
+const MAX_PREVIEW_BYTES: usize = 10 * 1024 * 1024;
+/// Largest attachment saved to disk to open with the default app.
+const MAX_OPEN_BYTES: usize = 200 * 1024 * 1024;
+/// Path segment every Azure attachment URL carries.
+const ATTACHMENT_PATH: &str = "/_apis/wit/attachments/";
+/// Longest title Azure DevOps accepts.
+const MAX_TITLE_CHARS: usize = 255;
+/// Child states treated as finished when the type's own states are unknown.
+const FALLBACK_FINISHED_STATES: [&str; 4] = ["Closed", "Done", "Completed", "Removed"];
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -241,6 +254,40 @@ pub struct AzureBoardChildren {
     pub truncated: bool,
 }
 
+/// What picking up a story asks for: one child work item under `parent_id`.
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AzureCreateChild {
+    pub project: String,
+    pub parent_id: i64,
+    pub title: String,
+    pub area_path: String,
+    pub iteration_path: String,
+    pub work_item_type: String,
+}
+
+impl Default for AzureCreateChild {
+    fn default() -> Self {
+        Self {
+            project: String::new(),
+            parent_id: 0,
+            title: String::new(),
+            area_path: String::new(),
+            iteration_path: String::new(),
+            work_item_type: "Task".into(),
+        }
+    }
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureChildCreated {
+    /// `false` when the user already held an unfinished child, which is
+    /// returned instead of making another.
+    pub created: bool,
+    pub child: AzureBoardChild,
+}
+
 /// Ids that widen "Assigned to me" beyond `[System.AssignedTo] = @Me`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct MineScope {
@@ -284,6 +331,27 @@ pub struct AzureRelatedItem {
     pub url: String,
 }
 
+/// A file attached to a work item (`AttachedFile` relation).
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureAttachment {
+    /// The guid at the end of the attachment URL.
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub size: i64,
+    pub created_date: String,
+    pub comment: String,
+}
+
+/// An image attachment ready to be shown as a `data:` URL.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureAttachmentPreview {
+    pub mime_type: String,
+    pub data_base64: String,
+}
+
 #[derive(Serialize, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AzureWorkItemRelations {
@@ -292,7 +360,7 @@ pub struct AzureWorkItemRelations {
     pub related: Vec<AzureRelatedItem>,
     pub pull_requests: i64,
     pub commits: i64,
-    pub attachments: Vec<String>,
+    pub attachments: Vec<AzureAttachment>,
     /// More linked items exist than were resolved.
     pub truncated: bool,
 }
@@ -333,7 +401,7 @@ struct RelationRefs {
     related: Vec<(i64, String)>,
     pull_requests: i64,
     commits: i64,
-    attachments: Vec<String>,
+    attachments: Vec<AzureAttachment>,
 }
 
 #[tauri::command]
@@ -581,6 +649,125 @@ pub async fn azure_boards_work_item(
     tauri::async_runtime::spawn_blocking(move || {
         let config = require_config(&app)?;
         azure_boards_work_item_for(&config, &project, id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// An image attachment as a base64 payload for an `<img>`. `name` is the file
+/// name when the caller has it (relations do; description images carry it in
+/// `?fileName=`).
+#[tauri::command]
+pub async fn azure_boards_attachment_preview(
+    app: AppHandle,
+    url: String,
+    name: Option<String>,
+) -> Result<AzureAttachmentPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = require_config(&app)?;
+        let url = checked_attachment_url(&config.url, &url)?;
+        let name = name
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .or_else(|| attachment_name_from_url(&url));
+        // A name that is plainly not an image saves the download.
+        if name
+            .as_deref()
+            .is_some_and(|name| image_mime_type(name).is_none())
+        {
+            return Err("Not an image".into());
+        }
+        let (bytes, truncated) = azure_get_bytes_url(
+            &config,
+            &attachment_download_url(&url),
+            Some(MAX_PREVIEW_BYTES),
+        )?;
+        if truncated {
+            return Err("Attachment is too large to preview".into());
+        }
+        let mime_type = preview_mime_type(name.as_deref(), &bytes).ok_or("Not an image")?;
+        Ok(AzureAttachmentPreview {
+            mime_type: mime_type.into(),
+            data_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Downloads an attachment to a temp folder and returns its path; the caller
+/// opens it with the system's default app.
+#[tauri::command]
+pub async fn azure_boards_attachment_open(
+    app: AppHandle,
+    url: String,
+    name: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = require_config(&app)?;
+        let url = checked_attachment_url(&config.url, &url)?;
+        let file_name = safe_file_name(&name);
+        if is_launchable_file(&file_name) {
+            return Err(
+                "MonoCode doesn't open programs or scripts from attachments. Open it in Azure DevOps instead."
+                    .into(),
+            );
+        }
+        let (bytes, truncated) = azure_get_bytes_url(
+            &config,
+            &attachment_download_url(&url),
+            Some(MAX_OPEN_BYTES),
+        )?;
+        if truncated {
+            return Err("Attachment is too large to open (200 MB limit)".into());
+        }
+        let path = attachment_temp_path(&file_name);
+        let dir = path.parent().ok_or("Couldn't save the attachment")?;
+        std::fs::create_dir_all(dir)
+            .and_then(|()| std::fs::write(&path, &bytes))
+            .map_err(|error| format!("Couldn't save the attachment: {error}"))?;
+        Ok(path.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Adds a child work item (a Task by default) assigned to the connected user,
+/// unless they already hold an unfinished child of that parent.
+#[tauri::command]
+pub async fn azure_boards_create_child(
+    app: AppHandle,
+    request: AzureCreateChild,
+) -> Result<AzureChildCreated, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = require_config(&app)?;
+        azure_boards_create_child_for(&config, &request)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Deletes a work item. Azure moves it to the recycle bin, so it can be
+/// restored from the web.
+#[tauri::command]
+pub async fn azure_boards_delete_work_item(
+    app: AppHandle,
+    project: String,
+    id: i64,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = require_config(&app)?;
+        let project = checked_project(&project)?;
+        if id <= 0 {
+            return Err("Invalid Azure DevOps work item".into());
+        }
+        azure_delete(
+            &config,
+            &format!(
+                "/{}/_apis/wit/workitems/{id}?api-version={API_VERSION}",
+                encode_segment(&project)
+            ),
+        )
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1736,6 +1923,47 @@ fn relation_target_id(url: &str) -> Option<i64> {
         .filter(|id| *id > 0)
 }
 
+/// An `AttachedFile` relation. Rows without a usable URL are skipped: they
+/// could not be opened anyway.
+fn parse_attachment(row: &Value, url: &str) -> Option<AzureAttachment> {
+    let id = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|id| !id.is_empty())?
+        .to_string();
+    let attributes = row.get("attributes");
+    let text = |key: &str| {
+        attributes
+            .and_then(|attributes| string_field(attributes, key))
+            .unwrap_or_default()
+    };
+    let name = Some(text("name"))
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "Attachment".into());
+    let created = Some(text("resourceCreatedDate"))
+        .filter(|date| !date.is_empty())
+        .unwrap_or_else(|| text("authorizedDate"));
+    Some(AzureAttachment {
+        id,
+        name,
+        url: url.to_string(),
+        size: attributes
+            .and_then(|attributes| attributes.get("resourceSize"))
+            .and_then(|size| {
+                size.as_i64()
+                    .or_else(|| size.as_f64().map(|size| size as i64))
+            })
+            .unwrap_or(0)
+            .max(0),
+        created_date: created,
+        comment: text("comment"),
+    })
+}
+
 fn parse_relation_refs(value: &Value) -> RelationRefs {
     let mut refs = RelationRefs::default();
     let rows = value
@@ -1761,11 +1989,11 @@ fn parse_relation_refs(value: &Value) -> RelationRefs {
                     refs.children.push(id);
                 }
             }
-            "AttachedFile" => refs.attachments.push(if name.is_empty() {
-                "Attachment".into()
-            } else {
-                name
-            }),
+            "AttachedFile" => {
+                if let Some(attachment) = parse_attachment(row, &url) {
+                    refs.attachments.push(attachment);
+                }
+            }
             "ArtifactLink" => {
                 if name.eq_ignore_ascii_case("Pull Request") {
                     refs.pull_requests += 1;
@@ -2024,6 +2252,170 @@ fn parse_work_item_detail(
     })
 }
 
+// ---- Attachments ----
+
+const NOT_AN_ATTACHMENT: &str = "That isn't an attachment of this Azure DevOps organization";
+
+/// The URL when it is an attachment of the configured organization, else an
+/// error. The PAT travels with the download, so the host, port and the
+/// organization's path prefix must match and the path must be the attachments
+/// API; anything else (another host, `user@host` tricks, `..` segments) is
+/// refused. The fragment is dropped.
+fn checked_attachment_url(config_url: &str, url: &str) -> Result<String, String> {
+    let org = Url::parse(config_url.trim().trim_end_matches('/'))
+        .map_err(|_| NOT_AN_ATTACHMENT.to_string())?;
+    let mut target = Url::parse(url.trim()).map_err(|_| NOT_AN_ATTACHMENT.to_string())?;
+    // `Url` lowercases the host, so the host comparison is case-insensitive.
+    if target.scheme() != org.scheme()
+        || target.host_str() != org.host_str()
+        || target.port_or_known_default() != org.port_or_known_default()
+        || !target.username().is_empty()
+        || target.password().is_some()
+    {
+        return Err(NOT_AN_ATTACHMENT.into());
+    }
+    let org_path = org.path().trim_end_matches('/').to_ascii_lowercase();
+    let path = target.path().to_ascii_lowercase();
+    // Whole segments only: `/org` must not admit `/org2`.
+    let under_org =
+        org_path.is_empty() || path == org_path || path.starts_with(&format!("{org_path}/"));
+    let has_id = path.find(ATTACHMENT_PATH).is_some_and(|at| {
+        !path[at + ATTACHMENT_PATH.len()..]
+            .trim_matches('/')
+            .is_empty()
+    });
+    if !under_org || !has_id {
+        return Err(NOT_AN_ATTACHMENT.into());
+    }
+    target.set_fragment(None);
+    Ok(target.to_string())
+}
+
+/// `url` with `download=true&api-version=` appended, replacing any the URL
+/// already had and keeping the rest of its query as written.
+fn attachment_download_url(url: &str) -> String {
+    let (base, query) = url.split_once('?').unwrap_or((url, ""));
+    let mut parts: Vec<&str> = query
+        .split('&')
+        .filter(|part| !part.is_empty())
+        .filter(|part| {
+            let key = part.split('=').next().unwrap_or_default();
+            !key.eq_ignore_ascii_case("api-version") && !key.eq_ignore_ascii_case("download")
+        })
+        .collect();
+    parts.push("download=true");
+    let version = format!("api-version={API_VERSION}");
+    parts.push(&version);
+    format!("{base}?{}", parts.join("&"))
+}
+
+/// The `fileName` Azure puts on the attachment links inside rich text.
+fn attachment_name_from_url(url: &str) -> Option<String> {
+    Url::parse(url)
+        .ok()?
+        .query_pairs()
+        .find(|(key, _)| key.eq_ignore_ascii_case("fileName"))
+        .map(|(_, value)| value.trim().to_string())
+        .filter(|name| !name.is_empty())
+}
+
+/// Raster formats a webview shows safely. SVG is left out on purpose: it can
+/// carry script, so it is only ever a file, never inlined.
+fn image_mime_type(name: &str) -> Option<&'static str> {
+    let (_, extension) = name.trim().rsplit_once('.')?;
+    match extension.to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "bmp" => Some("image/bmp"),
+        _ => None,
+    }
+}
+
+/// The format the bytes say they are, for names without a known extension.
+fn sniff_image_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else if bytes.starts_with(b"BM") {
+        Some("image/bmp")
+    } else {
+        None
+    }
+}
+
+/// The bytes decide; the extension covers images with an unusual header.
+fn preview_mime_type(name: Option<&str>, bytes: &[u8]) -> Option<&'static str> {
+    sniff_image_mime(bytes).or_else(|| name.and_then(image_mime_type))
+}
+
+/// A single path segment safe to create under a temp folder: no separators,
+/// control or Windows-reserved characters, no leading dots, bounded length.
+fn safe_file_name(name: &str) -> String {
+    const MAX_CHARS: usize = 150;
+    let cleaned: String = name
+        .chars()
+        .filter(|ch| !ch.is_control() && *ch != '/' && *ch != '\\')
+        .map(|ch| if "<>:\"|?*".contains(ch) { '_' } else { ch })
+        .collect();
+    let mut cleaned = cleaned
+        .trim_matches(|ch: char| ch == '.' || ch.is_whitespace())
+        .to_string();
+    if cleaned.chars().count() > MAX_CHARS {
+        let extension = cleaned
+            .rsplit_once('.')
+            .map(|(_, extension)| extension.to_string())
+            .filter(|extension| extension.chars().count() <= 16);
+        cleaned = match extension {
+            Some(extension) => {
+                let keep = MAX_CHARS - extension.chars().count() - 1;
+                let stem: String = cleaned.chars().take(keep).collect();
+                format!("{stem}.{extension}")
+            }
+            None => cleaned.chars().take(MAX_CHARS).collect(),
+        };
+    }
+    if cleaned.is_empty() {
+        return "attachment".into();
+    }
+    let stem = cleaned.split('.').next().unwrap_or_default();
+    const RESERVED: [&str; 6] = ["con", "prn", "aux", "nul", "com1", "lpt1"];
+    if RESERVED.iter().any(|name| stem.eq_ignore_ascii_case(name)) {
+        cleaned.insert(0, '_');
+    }
+    cleaned
+}
+
+/// Files the system would run rather than show. Attachments are other
+/// people's uploads, so a click must never launch one.
+fn is_launchable_file(name: &str) -> bool {
+    const LAUNCHABLE: [&str; 28] = [
+        "exe", "com", "bat", "cmd", "msi", "msp", "scr", "pif", "lnk", "ps1", "psm1", "vbs", "vbe",
+        "js", "jse", "wsf", "wsh", "hta", "cpl", "reg", "jar", "app", "command", "sh", "pkg",
+        "dmg", "dll", "apk",
+    ];
+    name.rsplit_once('.').is_some_and(|(_, extension)| {
+        LAUNCHABLE
+            .iter()
+            .any(|known| extension.eq_ignore_ascii_case(known))
+    })
+}
+
+/// `{temp}/monocode-ado-attachments/{uuid}/{file_name}`: a fresh folder per
+/// download so two attachments with the same name never overwrite each other.
+fn attachment_temp_path(file_name: &str) -> PathBuf {
+    std::env::temp_dir()
+        .join("monocode-ado-attachments")
+        .join(uuid::Uuid::new_v4().to_string())
+        .join(file_name)
+}
+
 // ---- Moves ----
 
 /// JSON Patch for a card move. No `test /rev` op: the last write wins, as on
@@ -2060,6 +2452,186 @@ fn board_move_ops(request: &AzureBoardMove) -> Result<Vec<Value>, String> {
         return Err("Nothing to update".into());
     }
     Ok(ops)
+}
+
+// ---- Picking up an item ----
+
+/// The request with its text trimmed, or why it cannot be sent.
+fn checked_create_child(request: &AzureCreateChild) -> Result<AzureCreateChild, String> {
+    let project = checked_project(&request.project)?;
+    if request.parent_id <= 0 {
+        return Err("Invalid Azure DevOps work item".into());
+    }
+    let title = request.title.trim();
+    if title.is_empty() {
+        return Err("Give the task a title".into());
+    }
+    if title.chars().count() > MAX_TITLE_CHARS {
+        return Err(format!(
+            "The task title is too long ({MAX_TITLE_CHARS} characters at most)"
+        ));
+    }
+    let work_item_type = Some(request.work_item_type.trim())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("Task");
+    if work_item_type.chars().count() > MAX_FIELD_REF_LEN {
+        return Err("Invalid Azure DevOps work item type".into());
+    }
+    Ok(AzureCreateChild {
+        project,
+        parent_id: request.parent_id,
+        title: title.to_string(),
+        area_path: request.area_path.trim().to_string(),
+        iteration_path: request.iteration_path.trim().to_string(),
+        work_item_type: work_item_type.to_string(),
+    })
+}
+
+/// States in which a child no longer counts as the user's open task.
+fn finished_child_states(item_type: &AzureWorkItemTypeStates) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let names: Vec<String> = item_type
+        .states
+        .iter()
+        .filter(|state| {
+            let category = state.category.trim();
+            category.eq_ignore_ascii_case("Completed") || category.eq_ignore_ascii_case("Removed")
+        })
+        .map(|state| state.name.trim().to_string())
+        .filter(|name| !name.is_empty() && seen.insert(name.clone()))
+        .collect();
+    if names.is_empty() {
+        return FALLBACK_FINISHED_STATES
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+    }
+    names
+}
+
+/// The connected user's unfinished children of one parent, newest first.
+fn child_guard_wiql(parent_id: i64, finished: &[String]) -> String {
+    let names = finished
+        .iter()
+        .map(|name| wiql_literal(name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND \
+         [System.Parent] = {parent_id} AND [System.AssignedTo] = @Me AND \
+         [System.State] NOT IN ({names}) ORDER BY [System.ChangedDate] DESC"
+    )
+}
+
+/// JSON Patch that creates the child, assigned to `me` and linked to its
+/// parent. Assigning by sign-in name is what Azure resolves reliably; the
+/// identity id is the fallback when the account reports none.
+fn create_child_ops(request: &AzureCreateChild, me: &AzureDevOpsUser, org_url: &str) -> Vec<Value> {
+    let assignee = if me.unique_name.trim().is_empty() {
+        me.id.trim()
+    } else {
+        me.unique_name.trim()
+    };
+    let mut ops = vec![
+        json!({ "op": "add", "path": "/fields/System.Title", "value": request.title }),
+        json!({ "op": "add", "path": "/fields/System.AssignedTo", "value": assignee }),
+    ];
+    if !request.area_path.is_empty() {
+        ops.push(
+            json!({ "op": "add", "path": "/fields/System.AreaPath", "value": request.area_path }),
+        );
+    }
+    if !request.iteration_path.is_empty() {
+        ops.push(json!({
+            "op": "add",
+            "path": "/fields/System.IterationPath",
+            "value": request.iteration_path
+        }));
+    }
+    ops.push(json!({
+        "op": "add",
+        "path": "/relations/-",
+        "value": {
+            "rel": "System.LinkTypes.Hierarchy-Reverse",
+            "url": format!("{}/_apis/wit/workItems/{}", org_url.trim_end_matches('/'), request.parent_id),
+            "attributes": { "comment": "Created by MonoCode when the item was picked up" }
+        }
+    }));
+    ops
+}
+
+fn azure_boards_create_child_for(
+    config: &AzureDevOpsConfig,
+    request: &AzureCreateChild,
+) -> Result<AzureChildCreated, String> {
+    let request = checked_create_child(request)?;
+    let project = &request.project;
+    let me = azure_current_user(config)?;
+    // Guard first: a second pick-up (another window, a retry after a timeout)
+    // must find the task the first one made.
+    let states = fetch_type_states(config, project, &request.work_item_type);
+    let response = azure_post_json(
+        config,
+        &format!(
+            "/{}/_apis/wit/wiql?$top=2&api-version={API_VERSION}",
+            encode_segment(project)
+        ),
+        json!({ "query": child_guard_wiql(request.parent_id, &finished_child_states(&states)) }),
+    )?;
+    let (ids, _) = wiql_ids(&response.value, 2)?;
+    if let Some(id) = ids.first() {
+        let response = azure_post_json(
+            config,
+            &format!(
+                "/{}/_apis/wit/workitemsbatch?api-version={API_VERSION}",
+                encode_segment(project)
+            ),
+            json!({ "ids": [id], "fields": CHILD_FIELDS, "errorPolicy": "omit" }),
+        )?;
+        let row = response
+            .value
+            .get("value")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .ok_or_else(|| "Azure DevOps did not return your existing task".to_string())?;
+        let child = parse_created_child(row, request.parent_id, &config.url, project)
+            .ok_or_else(|| "Azure DevOps did not return your existing task".to_string())?;
+        return Ok(AzureChildCreated {
+            created: false,
+            child,
+        });
+    }
+    let response = azure_post_json_patch(
+        config,
+        &format!(
+            "/{}/_apis/wit/workitems/${}?api-version={API_VERSION}",
+            encode_segment(project),
+            encode_segment(&request.work_item_type)
+        ),
+        &create_child_ops(&request, &me, &config.url),
+    )?;
+    let child = parse_created_child(&response.value, request.parent_id, &config.url, project)
+        .ok_or_else(|| "Azure DevOps did not return the new task".to_string())?;
+    Ok(AzureChildCreated {
+        created: true,
+        child,
+    })
+}
+
+/// `parse_child` for a row that may lack `System.Parent` (the create response
+/// does): the parent is the one the request named.
+fn parse_created_child(
+    row: &Value,
+    parent_id: i64,
+    base_url: &str,
+    project: &str,
+) -> Option<AzureBoardChild> {
+    let mut row = row.clone();
+    let fields = row.get_mut("fields")?.as_object_mut()?;
+    if number_field(&Value::Object(fields.clone()), Some("System.Parent")).is_none() {
+        fields.insert("System.Parent".into(), json!(parent_id));
+    }
+    parse_child(&row, base_url, project)
 }
 
 #[cfg(test)]
@@ -2912,7 +3484,8 @@ mod tests {
                 { "rel": "ArtifactLink", "url": "vstfs:///Git/PullRequestId/x", "attributes": { "name": "Pull Request" } },
                 { "rel": "ArtifactLink", "url": "vstfs:///Git/Commit/x", "attributes": { "name": "Fixed in Commit" } },
                 { "rel": "ArtifactLink", "url": "vstfs:///Git/PullRequestId/y", "attributes": { "name": "Pull Request" } },
-                { "rel": "AttachedFile", "url": "https://dev.azure.com/o/_apis/wit/attachments/a", "attributes": { "name": "menu ajuda.mp4" } },
+                { "rel": "AttachedFile", "url": "https://dev.azure.com/o/p-guid/_apis/wit/attachments/0a1b2c3d-0000-4000-8000-000000000001", "attributes": { "authorizedDate": "2026-10-13T16:47:09.000Z", "id": 25355152, "resourceCreatedDate": "2026-10-13T16:47:10.147Z", "revisedDate": "9999-01-01T00:00:00Z", "resourceSize": 32352348, "name": "menu ajuda.mp4", "comment": "Fluxo novo" } },
+                { "rel": "AttachedFile", "url": "https://dev.azure.com/o/p-guid/_apis/wit/attachments/0a1b2c3d-0000-4000-8000-000000000002?fileName=x.png", "attributes": { "authorizedDate": "2026-10-14T09:00:00.000Z", "resourceSize": 514 } },
                 { "rel": "System.LinkTypes.Dependency-Forward", "url": "https://dev.azure.com/o/_apis/wit/workItems/400000", "attributes": { "name": "Successor" } },
                 { "rel": "Hyperlink", "url": "https://docs.example.com", "attributes": {} }
             ]
@@ -2932,7 +3505,29 @@ mod tests {
             ]
         );
         assert_eq!((refs.pull_requests, refs.commits), (2, 1));
-        assert_eq!(refs.attachments, vec!["menu ajuda.mp4"]);
+        assert_eq!(
+            refs.attachments,
+            vec![
+                AzureAttachment {
+                    id: "0a1b2c3d-0000-4000-8000-000000000001".into(),
+                    name: "menu ajuda.mp4".into(),
+                    url: "https://dev.azure.com/o/p-guid/_apis/wit/attachments/0a1b2c3d-0000-4000-8000-000000000001".into(),
+                    size: 32352348,
+                    created_date: "2026-10-13T16:47:10.147Z".into(),
+                    comment: "Fluxo novo".into(),
+                },
+                // No name, no created date and no comment: fall back to the
+                // authorized date and an empty comment.
+                AzureAttachment {
+                    id: "0a1b2c3d-0000-4000-8000-000000000002".into(),
+                    name: "Attachment".into(),
+                    url: "https://dev.azure.com/o/p-guid/_apis/wit/attachments/0a1b2c3d-0000-4000-8000-000000000002?fileName=x.png".into(),
+                    size: 514,
+                    created_date: "2026-10-14T09:00:00.000Z".into(),
+                    comment: String::new(),
+                },
+            ]
+        );
         assert_eq!(
             refs.linked_ids(10),
             (vec![359655, 386818, 376075, 400000], false)
@@ -3041,6 +3636,8 @@ mod tests {
             (detail.relations.pull_requests, detail.relations.commits),
             (2, 1)
         );
+        assert_eq!(detail.relations.attachments.len(), 2);
+        assert_eq!(detail.relations.attachments[0].name, "menu ajuda.mp4");
         assert_eq!(
             detail.url,
             "https://dev.azure.com/o/TI%20Banese/_workitems/edit/376073"
@@ -3048,6 +3645,11 @@ mod tests {
         let value = serde_json::to_value(&detail).unwrap();
         assert_eq!(value["descriptionHtml"], detail.description_html);
         assert_eq!(value["relations"]["pullRequests"], 2);
+        assert_eq!(value["relations"]["attachments"][0]["size"], 32352348);
+        assert_eq!(
+            value["relations"]["attachments"][0]["createdDate"],
+            "2026-10-13T16:47:10.147Z"
+        );
         assert_eq!(
             value["planning"][0]["referenceName"],
             "Microsoft.VSTS.Scheduling.StoryPoints"
@@ -3096,5 +3698,319 @@ mod tests {
         ]}));
         assert_eq!(labels.get("Custom.A").map(String::as_str), Some("Área"));
         assert_eq!(labels.len(), 1);
+    }
+    const ORG: &str = "https://dev.azure.com/org";
+    const ATTACHMENT: &str =
+        "https://dev.azure.com/org/0a1b2c3d-0000-4000-8000-000000000009/_apis/wit/attachments/0a1b2c3d-0000-4000-8000-000000000001";
+
+    #[test]
+    fn accepts_attachments_of_the_configured_organization() {
+        assert_eq!(checked_attachment_url(ORG, ATTACHMENT).unwrap(), ATTACHMENT);
+        // A trailing slash on the configured URL and an upper-case host.
+        assert!(checked_attachment_url("https://dev.azure.com/org/", ATTACHMENT).is_ok());
+        let shouting = ATTACHMENT.replace("dev.azure.com", "DEV.AZURE.COM");
+        assert_eq!(checked_attachment_url(ORG, &shouting).unwrap(), ATTACHMENT);
+        // The query survives, the fragment does not.
+        let with_query = format!("{ATTACHMENT}?fileName=a%20b.png#frag");
+        assert_eq!(
+            checked_attachment_url(ORG, &with_query).unwrap(),
+            format!("{ATTACHMENT}?fileName=a%20b.png")
+        );
+        // On-premises collections carry a path and sometimes a port.
+        assert!(checked_attachment_url(
+            "https://tfs.example.com:8443/tfs/Col",
+            "https://tfs.example.com:8443/tfs/Col/p/_apis/wit/attachments/abc"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn refuses_other_hosts_and_other_paths() {
+        for url in [
+            "https://evil.example.com/org/p/_apis/wit/attachments/abc",
+            "https://dev.azure.com.evil.com/org/p/_apis/wit/attachments/abc",
+            "https://dev.azure.com@evil.com/org/p/_apis/wit/attachments/abc",
+            "https://user:pw@dev.azure.com/org/p/_apis/wit/attachments/abc",
+            "http://dev.azure.com/org/p/_apis/wit/attachments/abc",
+            "https://dev.azure.com:8443/org/p/_apis/wit/attachments/abc",
+            "https://dev.azure.com/org2/p/_apis/wit/attachments/abc",
+            "https://dev.azure.com/other/_apis/wit/attachments/abc",
+            "https://dev.azure.com/org/../other/p/_apis/wit/attachments/abc",
+            "https://dev.azure.com/org/p/_apis/wit/workitems/12",
+            "https://dev.azure.com/org/p/_apis/wit/attachments/",
+            "https://dev.azure.com/org/p/_apis/wit/attachments",
+            "file:///etc/passwd",
+            "not a url",
+            "",
+        ] {
+            assert!(
+                checked_attachment_url(ORG, url).is_err(),
+                "should refuse {url}"
+            );
+        }
+        assert!(checked_attachment_url("", ATTACHMENT).is_err());
+    }
+
+    #[test]
+    fn appends_the_download_query_once() {
+        assert_eq!(
+            attachment_download_url("https://h/o/p/_apis/wit/attachments/a"),
+            "https://h/o/p/_apis/wit/attachments/a?download=true&api-version=7.1"
+        );
+        assert_eq!(
+            attachment_download_url("https://h/o/p/_apis/wit/attachments/a?fileName=a%20b.png"),
+            "https://h/o/p/_apis/wit/attachments/a?fileName=a%20b.png&download=true&api-version=7.1"
+        );
+        // An api-version or download already on the link is replaced.
+        assert_eq!(
+            attachment_download_url(
+                "https://h/o/p/_apis/wit/attachments/a?api-version=5.0&fileName=x.png&Download=false"
+            ),
+            "https://h/o/p/_apis/wit/attachments/a?fileName=x.png&download=true&api-version=7.1"
+        );
+        assert_eq!(
+            attachment_name_from_url("https://h/o/_apis/wit/attachments/a?fileName=my%20shot.png"),
+            Some("my shot.png".to_string())
+        );
+        assert_eq!(
+            attachment_name_from_url("https://h/o/_apis/wit/attachments/a"),
+            None
+        );
+    }
+
+    #[test]
+    fn maps_image_names_to_mime_types_and_never_svg() {
+        assert_eq!(image_mime_type("shot.PNG"), Some("image/png"));
+        assert_eq!(image_mime_type("a.b.jpg"), Some("image/jpeg"));
+        assert_eq!(image_mime_type("a.jpeg"), Some("image/jpeg"));
+        assert_eq!(image_mime_type("a.gif"), Some("image/gif"));
+        assert_eq!(image_mime_type("a.webp"), Some("image/webp"));
+        assert_eq!(image_mime_type("a.bmp"), Some("image/bmp"));
+        for name in ["logo.svg", "menu.mp4", "notes.txt", "png", "", "a.png.exe"] {
+            assert_eq!(image_mime_type(name), None, "{name}");
+        }
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0];
+        assert_eq!(sniff_image_mime(&png), Some("image/png"));
+        assert_eq!(sniff_image_mime(b"\xFF\xD8\xFF\xE0"), Some("image/jpeg"));
+        assert_eq!(sniff_image_mime(b"GIF89a.."), Some("image/gif"));
+        assert_eq!(
+            sniff_image_mime(b"RIFF\0\0\0\0WEBPVP8 "),
+            Some("image/webp")
+        );
+        assert_eq!(sniff_image_mime(b"<svg xmlns='x'></svg>"), None);
+        // The bytes win over a misleading name; the name covers odd headers.
+        assert_eq!(preview_mime_type(Some("a.gif"), &png), Some("image/png"));
+        assert_eq!(
+            preview_mime_type(Some("a.webp"), b"junk"),
+            Some("image/webp")
+        );
+        assert_eq!(preview_mime_type(None, b"junk"), None);
+    }
+
+    #[test]
+    fn makes_attachment_names_safe_to_write() {
+        assert_eq!(safe_file_name("menu ajuda.mp4"), "menu ajuda.mp4");
+        assert_eq!(safe_file_name("../../etc/passwd"), "etcpasswd");
+        assert_eq!(safe_file_name("..\\..\\evil.exe"), "evil.exe");
+        assert_eq!(safe_file_name(".."), "attachment");
+        assert_eq!(safe_file_name("  . "), "attachment");
+        assert_eq!(safe_file_name(""), "attachment");
+        assert_eq!(safe_file_name("a\u{0}b\nc.txt"), "abc.txt");
+        assert_eq!(safe_file_name("rel: a|b?.txt"), "rel_ a_b_.txt");
+        assert_eq!(safe_file_name("con.txt"), "_con.txt");
+        let long = format!("{}.pdf", "x".repeat(400));
+        let name = safe_file_name(&long);
+        assert_eq!(name.chars().count(), 150);
+        assert!(name.ends_with(".pdf"));
+        assert!(is_launchable_file("setup.EXE"));
+        assert!(is_launchable_file("run.command"));
+        assert!(!is_launchable_file("menu.mp4"));
+        assert!(!is_launchable_file("exe"));
+        let path = attachment_temp_path("a.png");
+        assert!(path.ends_with("a.png"));
+        assert!(path.starts_with(std::env::temp_dir().join("monocode-ado-attachments")));
+    }
+
+    fn me() -> AzureDevOpsUser {
+        AzureDevOpsUser {
+            id: "u-me".into(),
+            display_name: "Luiz".into(),
+            unique_name: "luiz@example.com".into(),
+        }
+    }
+
+    fn pickup() -> AzureCreateChild {
+        AzureCreateChild {
+            project: "TI Banese".into(),
+            parent_id: 376073,
+            title: "Em implementação".into(),
+            area_path: "TI Banese\\SUTEC".into(),
+            iteration_path: "TI Banese\\2026_R4\\S01".into(),
+            work_item_type: "Task".into(),
+        }
+    }
+
+    #[test]
+    fn builds_the_create_child_patch_exactly() {
+        let ops = create_child_ops(&pickup(), &me(), "https://dev.azure.com/org/");
+        assert_eq!(
+            Value::Array(ops),
+            json!([
+                { "op": "add", "path": "/fields/System.Title", "value": "Em implementação" },
+                { "op": "add", "path": "/fields/System.AssignedTo", "value": "luiz@example.com" },
+                { "op": "add", "path": "/fields/System.AreaPath", "value": "TI Banese\\SUTEC" },
+                { "op": "add", "path": "/fields/System.IterationPath", "value": "TI Banese\\2026_R4\\S01" },
+                {
+                    "op": "add",
+                    "path": "/relations/-",
+                    "value": {
+                        "rel": "System.LinkTypes.Hierarchy-Reverse",
+                        "url": "https://dev.azure.com/org/_apis/wit/workItems/376073",
+                        "attributes": { "comment": "Created by MonoCode when the item was picked up" }
+                    }
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn create_child_falls_back_to_the_identity_id_and_skips_empty_paths() {
+        let mut user = me();
+        user.unique_name = "  ".into();
+        let mut request = pickup();
+        request.area_path.clear();
+        request.iteration_path.clear();
+        let ops = create_child_ops(&request, &user, "https://dev.azure.com/org");
+        let paths: Vec<&str> = ops.iter().map(|op| op["path"].as_str().unwrap()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "/fields/System.Title",
+                "/fields/System.AssignedTo",
+                "/relations/-"
+            ]
+        );
+        assert_eq!(ops[1]["value"], "u-me");
+    }
+
+    #[test]
+    fn builds_the_child_guard_wiql_exactly() {
+        let finished = vec!["Completed".to_string(), "Removed".to_string()];
+        assert_eq!(
+            child_guard_wiql(376073, &finished),
+            "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND \
+             [System.Parent] = 376073 AND [System.AssignedTo] = @Me AND \
+             [System.State] NOT IN ('Completed', 'Removed') ORDER BY [System.ChangedDate] DESC"
+        );
+    }
+
+    #[test]
+    fn finished_child_states_come_from_categories_or_fall_back() {
+        let task = AzureWorkItemTypeStates {
+            name: "Task".into(),
+            states: states(&[
+                ("Defined", "Proposed"),
+                ("In Progress", "InProgress"),
+                ("Completed", "Completed"),
+                ("Removed", "Removed"),
+                ("Completed", "Completed"),
+            ]),
+        };
+        assert_eq!(finished_child_states(&task), vec!["Completed", "Removed"]);
+        let unknown = AzureWorkItemTypeStates {
+            name: "Task".into(),
+            states: Vec::new(),
+        };
+        assert_eq!(
+            finished_child_states(&unknown),
+            vec!["Closed", "Done", "Completed", "Removed"]
+        );
+        let no_end = AzureWorkItemTypeStates {
+            name: "Task".into(),
+            states: states(&[("Defined", "Proposed")]),
+        };
+        assert_eq!(finished_child_states(&no_end).len(), 4);
+    }
+
+    #[test]
+    fn validates_the_create_child_request() {
+        let checked = checked_create_child(&AzureCreateChild {
+            project: " TI Banese ".into(),
+            title: "  Em implementação  ".into(),
+            area_path: " A ".into(),
+            work_item_type: " ".into(),
+            ..pickup()
+        })
+        .unwrap();
+        assert_eq!(checked.project, "TI Banese");
+        assert_eq!(checked.title, "Em implementação");
+        assert_eq!(checked.area_path, "A");
+        assert_eq!(checked.work_item_type, "Task");
+        let broken = |change: fn(&mut AzureCreateChild)| {
+            let mut request = pickup();
+            change(&mut request);
+            checked_create_child(&request).unwrap_err()
+        };
+        assert_eq!(
+            broken(|request| request.project = " ".into()),
+            "Pick an Azure DevOps project"
+        );
+        assert_eq!(
+            broken(|request| request.parent_id = 0),
+            "Invalid Azure DevOps work item"
+        );
+        assert_eq!(
+            broken(|request| request.title = "   ".into()),
+            "Give the task a title"
+        );
+        assert!(broken(|request| request.title = "x".repeat(256)).contains("255"));
+        assert!(checked_create_child(&AzureCreateChild {
+            title: "x".repeat(255),
+            ..pickup()
+        })
+        .is_ok());
+        // The request arrives as camelCase JSON; the type defaults to Task.
+        let request: AzureCreateChild = serde_json::from_value(json!({
+            "project": "P", "parentId": 7, "title": "T", "areaPath": "A", "iterationPath": "I"
+        }))
+        .unwrap();
+        assert_eq!(
+            (request.parent_id, request.work_item_type.as_str()),
+            (7, "Task")
+        );
+    }
+
+    #[test]
+    fn the_created_child_falls_back_to_the_requested_parent() {
+        let created = json!({
+            "id": 386818,
+            "fields": {
+                "System.WorkItemType": "Task",
+                "System.Title": "Em implementação",
+                "System.State": "Defined",
+                "System.TeamProject": "TI Banese",
+                "System.AssignedTo": { "id": "u-me", "displayName": "Luiz" },
+                "System.ChangedDate": "2026-10-19T12:00:00Z"
+            },
+            "_links": { "html": { "href": "https://dev.azure.com/org/p/_workitems/edit/386818" } }
+        });
+        let child =
+            parse_created_child(&created, 376073, "https://dev.azure.com/org", "P").unwrap();
+        assert_eq!((child.id, child.parent_id), (386818, 376073));
+        assert_eq!(child.state, "Defined");
+        assert_eq!(
+            child.url,
+            "https://dev.azure.com/org/p/_workitems/edit/386818"
+        );
+        // A parent the row names itself wins.
+        let mut named = created.clone();
+        named["fields"]["System.Parent"] = json!(5);
+        assert_eq!(
+            parse_created_child(&named, 376073, "u", "P")
+                .unwrap()
+                .parent_id,
+            5
+        );
+        assert!(parse_created_child(&json!({ "id": 1 }), 7, "u", "P").is_none());
     }
 }
