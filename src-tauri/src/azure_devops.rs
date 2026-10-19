@@ -1726,27 +1726,52 @@ fn azure_write_http_error(status: u16, body: &str) -> String {
     REFUSED.into()
 }
 
-fn azure_current_user_id(config: &AzureDevOpsConfig) -> Result<String, String> {
+/// The identity behind the PAT, as `connectionData` reports it.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureDevOpsUser {
+    pub id: String,
+    pub display_name: String,
+    /// The account's sign-in name, often an email; empty when not reported.
+    pub unique_name: String,
+}
+
+pub(crate) fn azure_current_user(config: &AzureDevOpsConfig) -> Result<AzureDevOpsUser, String> {
     // connectionData is still under preview and rejects stable api-versions.
     let response = azure_get(
         config,
         &format!("/_apis/connectionData?api-version={CONNECTION_DATA_API_VERSION}"),
     )?;
-    let id = response
-        .value
-        .get("authenticatedUser")
-        .and_then(|user| string_field(user, "id"))
-        .or_else(|| {
-            response
-                .value
-                .get("authorizedUser")
-                .and_then(|user| string_field(user, "id"))
+    parse_connection_user(&response.value)
+}
+
+fn azure_current_user_id(config: &AzureDevOpsConfig) -> Result<String, String> {
+    Ok(azure_current_user(config)?.id)
+}
+
+/// `authenticatedUser` first, then `authorizedUser`; the id must be present.
+pub(crate) fn parse_connection_user(value: &Value) -> Result<AzureDevOpsUser, String> {
+    let user = ["authenticatedUser", "authorizedUser"]
+        .iter()
+        .filter_map(|key| value.get(*key))
+        .find(|user| {
+            string_field(user, "id")
+                .map(|id| !id.is_empty())
+                .unwrap_or(false)
         })
+        .ok_or_else(|| "Azure DevOps did not return the current user".to_string())?;
+    let unique_name = user
+        .get("properties")
+        .and_then(|properties| properties.get("Account"))
+        .and_then(|account| string_field(account, "$value"))
         .unwrap_or_default();
-    if id.trim().is_empty() {
-        return Err("Azure DevOps did not return the current user".into());
-    }
-    Ok(id)
+    Ok(AzureDevOpsUser {
+        id: string_field(user, "id").unwrap_or_default(),
+        display_name: string_field(user, "providerDisplayName")
+            .or_else(|| string_field(user, "customDisplayName"))
+            .unwrap_or_default(),
+        unique_name,
+    })
 }
 
 fn azure_agent() -> ureq::Agent {
@@ -2206,6 +2231,33 @@ fn expand_home(input: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_the_connection_user() {
+        let value = json!({
+            "authenticatedUser": {
+                "id": "u-1",
+                "providerDisplayName": "Luiz Gustavo Moura",
+                "properties": { "Account": { "$type": "System.String", "$value": "luiz@example.com" } }
+            },
+            "authorizedUser": { "id": "u-2", "providerDisplayName": "Other" }
+        });
+        let user = parse_connection_user(&value).unwrap();
+        assert_eq!(user.id, "u-1");
+        assert_eq!(user.display_name, "Luiz Gustavo Moura");
+        assert_eq!(user.unique_name, "luiz@example.com");
+        let fallback = parse_connection_user(&json!({
+            "authenticatedUser": { "id": "" },
+            "authorizedUser": { "id": "u-2", "customDisplayName": "Ada" }
+        }))
+        .unwrap();
+        assert_eq!(
+            (fallback.id.as_str(), fallback.display_name.as_str()),
+            ("u-2", "Ada")
+        );
+        assert!(fallback.unique_name.is_empty());
+        assert!(parse_connection_user(&json!({})).is_err());
+    }
     use serde_json::json;
 
     #[test]

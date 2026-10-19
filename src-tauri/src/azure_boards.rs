@@ -2,14 +2,16 @@
 //! Reuses the Azure DevOps connection (`azure_devops.rs`) for auth and HTTP.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
 use crate::azure_devops::{
-    azure_get, azure_get_optional, azure_patch_json_patch, azure_post_json, encode_segment,
-    require_config, string_field, work_item_web_url, AzureDevOpsConfig, API_VERSION,
+    azure_current_user, azure_get, azure_get_optional, azure_patch_json_patch, azure_post_json,
+    encode_segment, require_config, string_field, work_item_web_url, AzureDevOpsConfig,
+    AzureDevOpsUser, API_VERSION,
 };
 
 const DEFAULT_LIMIT: u32 = 500;
@@ -18,6 +20,16 @@ const MAX_LIMIT: u32 = 1000;
 const BATCH_SIZE: usize = 200;
 const MAX_AREAS: usize = 2000;
 const MAX_FIELD_REF_LEN: usize = 128;
+/// Parent ids per `System.Parent IN (...)` query; keeps the WIQL text short.
+const CHILDREN_PARENT_CHUNK: usize = 250;
+/// Children fetched for one board; past this the owners are incomplete.
+const MAX_CHILDREN: usize = 2000;
+/// Ids spliced into an `IN (...)` clause of the board query.
+const MAX_IN_IDS: usize = 2000;
+/// Relations a link query may return before "mine" is reported as truncated.
+const LINK_TOP: usize = 4000;
+/// Related work items resolved for the detail view.
+const MAX_RELATED: usize = 200;
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -145,6 +157,8 @@ pub struct AzureBoardQuery {
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AzureBoardAssignee {
+    /// Identity id, matched against the connected user; empty when unknown.
+    pub id: String,
     pub display_name: String,
     pub unique_name: String,
     pub image_url: String,
@@ -201,6 +215,125 @@ struct DynamicFields {
     effort: Option<String>,
     column: Option<String>,
     done: Option<String>,
+}
+
+/// A child work item (Task, Test...) of an item on the board.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureBoardChild {
+    pub id: i64,
+    pub parent_id: i64,
+    pub work_item_type: String,
+    pub title: String,
+    pub state: String,
+    pub assigned_to: Option<AzureBoardAssignee>,
+    pub changed_date: String,
+    pub url: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureBoardChildren {
+    pub items: Vec<AzureBoardChild>,
+    /// States of the child types found, so the TS side can tell removed and
+    /// in-progress children apart.
+    pub types: Vec<AzureWorkItemTypeStates>,
+    pub truncated: bool,
+}
+
+/// Ids that widen "Assigned to me" beyond `[System.AssignedTo] = @Me`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct MineScope {
+    /// Board items with a child assigned to the connected user.
+    with_my_child: Vec<i64>,
+    /// Proposed items someone already took through an assigned child.
+    taken_proposed: Vec<i64>,
+}
+
+/// A scalar field shown in the detail view's planning section.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureWorkItemField {
+    pub reference_name: String,
+    pub label: String,
+    pub value: String,
+    /// `text`, `number`, `bool`, `date` or `identity`.
+    pub kind: String,
+}
+
+/// A rich-text field other than the description, kept as Azure's HTML.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureHtmlSection {
+    pub reference_name: String,
+    pub label: String,
+    pub html: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureRelatedItem {
+    pub id: i64,
+    /// Link name as Azure shows it: `Parent`, `Child`, `Related`, `Predecessor`...
+    pub link: String,
+    pub work_item_type: String,
+    pub title: String,
+    pub state: String,
+    pub assigned_to: Option<AzureBoardAssignee>,
+    pub changed_date: String,
+    pub url: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureWorkItemRelations {
+    pub parent: Option<AzureRelatedItem>,
+    pub children: Vec<AzureRelatedItem>,
+    pub related: Vec<AzureRelatedItem>,
+    pub pull_requests: i64,
+    pub commits: i64,
+    pub attachments: Vec<String>,
+    /// More linked items exist than were resolved.
+    pub truncated: bool,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureWorkItemDetail {
+    pub id: i64,
+    pub rev: i64,
+    pub work_item_type: String,
+    pub title: String,
+    pub state: String,
+    pub reason: String,
+    pub project: String,
+    pub assigned_to: Option<AzureBoardAssignee>,
+    pub created_by: Option<AzureBoardAssignee>,
+    pub changed_by: Option<AzureBoardAssignee>,
+    pub created_date: String,
+    pub changed_date: String,
+    pub area_path: String,
+    pub iteration_path: String,
+    pub tags: Vec<String>,
+    pub comment_count: i64,
+    pub description_html: String,
+    pub sections: Vec<AzureHtmlSection>,
+    pub planning: Vec<AzureWorkItemField>,
+    pub story_points: Option<f64>,
+    pub priority: Option<i64>,
+    pub relations: AzureWorkItemRelations,
+    pub url: String,
+}
+
+/// Link ids and artifact counts read from `relations`, before resolution.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RelationRefs {
+    parent: Option<i64>,
+    children: Vec<i64>,
+    related: Vec<(i64, String)>,
+    pull_requests: i64,
+    commits: i64,
+    attachments: Vec<String>,
 }
 
 #[tauri::command]
@@ -363,7 +496,12 @@ fn azure_boards_query_for(
     let project = checked_project(&query.project)?;
     let team = checked_team(&query.team)?;
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let wiql = board_wiql(query)?;
+    let (mine, mine_truncated) = if query.assigned_to_me {
+        mine_scope(config, &project, &team, query)?
+    } else {
+        (MineScope::default(), false)
+    };
+    let wiql = board_wiql_with(query, &mine)?;
     let fields = query_dynamic_fields(query)?;
     // Team-scoped so `@CurrentIteration` resolves to this team's sprint.
     let response = azure_post_json(
@@ -376,6 +514,7 @@ fn azure_boards_query_for(
         json!({ "query": wiql }),
     )?;
     let (ids, truncated) = wiql_ids(&response.value, limit as usize)?;
+    let truncated = truncated || mine_truncated;
     if ids.is_empty() {
         return Ok(AzureBoardItems {
             items: Vec::new(),
@@ -405,6 +544,255 @@ fn azure_boards_query_for(
         .filter_map(|row| parse_board_item(row, &config.url, &project, &fields))
         .collect();
     Ok(AzureBoardItems { items, truncated })
+}
+
+#[tauri::command]
+pub async fn azure_boards_children(
+    app: AppHandle,
+    project: String,
+    parent_ids: Vec<i64>,
+) -> Result<AzureBoardChildren, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = require_config(&app)?;
+        azure_boards_children_for(&config, &project, &parent_ids)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// The identity behind the PAT, so the TS side can tell which children are
+/// the user's own.
+#[tauri::command]
+pub async fn azure_boards_me(app: AppHandle) -> Result<AzureDevOpsUser, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = require_config(&app)?;
+        azure_current_user(&config)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn azure_boards_work_item(
+    app: AppHandle,
+    project: String,
+    id: i64,
+) -> Result<AzureWorkItemDetail, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = require_config(&app)?;
+        azure_boards_work_item_for(&config, &project, id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Children of `parent_ids` in one flat WIQL per chunk of parents, then the
+/// batch API for their fields. Deleted or unreadable children are skipped.
+fn azure_boards_children_for(
+    config: &AzureDevOpsConfig,
+    project: &str,
+    parent_ids: &[i64],
+) -> Result<AzureBoardChildren, String> {
+    let project = checked_project(project)?;
+    let parents = unique_positive_ids(parent_ids);
+    if parents.is_empty() {
+        return Ok(AzureBoardChildren {
+            items: Vec::new(),
+            types: Vec::new(),
+            truncated: false,
+        });
+    }
+    let wiql_path = format!(
+        "/{}/_apis/wit/wiql?$top={}&api-version={API_VERSION}",
+        encode_segment(&project),
+        MAX_CHILDREN + 1
+    );
+    let mut ids: Vec<i64> = Vec::new();
+    let mut seen = HashSet::new();
+    let mut truncated = false;
+    for chunk in parents.chunks(CHILDREN_PARENT_CHUNK) {
+        let response =
+            azure_post_json(config, &wiql_path, json!({ "query": children_wiql(chunk) }))?;
+        let (chunk_ids, chunk_truncated) = wiql_ids(&response.value, MAX_CHILDREN)?;
+        truncated |= chunk_truncated;
+        ids.extend(chunk_ids.into_iter().filter(|id| seen.insert(*id)));
+    }
+    if ids.len() > MAX_CHILDREN {
+        ids.truncate(MAX_CHILDREN);
+        truncated = true;
+    }
+    let batch_path = format!(
+        "/{}/_apis/wit/workitemsbatch?api-version={API_VERSION}",
+        encode_segment(&project)
+    );
+    let rows = fetch_items_in_chunks(&ids, |chunk| {
+        let response = azure_post_json(
+            config,
+            &batch_path,
+            json!({ "ids": chunk, "fields": CHILD_FIELDS, "errorPolicy": "omit" }),
+        )?;
+        Ok(response
+            .value
+            .get("value")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    })?;
+    let items: Vec<AzureBoardChild> = rows
+        .iter()
+        .filter_map(|row| parse_child(row, &config.url, &project))
+        .collect();
+    let mut type_names: Vec<&str> = items
+        .iter()
+        .map(|item| item.work_item_type.as_str())
+        .filter(|name| !name.is_empty())
+        .collect();
+    type_names.sort_unstable();
+    type_names.dedup();
+    let types = type_names
+        .into_iter()
+        .map(|name| fetch_type_states(config, &project, name))
+        .collect();
+    Ok(AzureBoardChildren {
+        items,
+        types,
+        truncated,
+    })
+}
+
+/// The full work item with its relations resolved to summaries and its
+/// process fields labelled.
+fn azure_boards_work_item_for(
+    config: &AzureDevOpsConfig,
+    project: &str,
+    id: i64,
+) -> Result<AzureWorkItemDetail, String> {
+    let project = checked_project(project)?;
+    if id <= 0 {
+        return Err("Invalid Azure DevOps work item id".into());
+    }
+    let response = azure_get(
+        config,
+        &format!(
+            "/{}/_apis/wit/workitems/{}?$expand=relations&api-version={API_VERSION}",
+            encode_segment(&project),
+            id
+        ),
+    )?;
+    let refs = parse_relation_refs(&response.value);
+    let (linked_ids, links_truncated) = refs.linked_ids(MAX_RELATED);
+    let mut summaries: HashMap<i64, Value> = HashMap::new();
+    if !linked_ids.is_empty() {
+        let batch_path = format!(
+            "/{}/_apis/wit/workitemsbatch?api-version={API_VERSION}",
+            encode_segment(&project)
+        );
+        for row in fetch_items_in_chunks(&linked_ids, |chunk| {
+            let response = azure_post_json(
+                config,
+                &batch_path,
+                json!({ "ids": chunk, "fields": CHILD_FIELDS, "errorPolicy": "omit" }),
+            )?;
+            Ok(response
+                .value
+                .get("value")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default())
+        })? {
+            if let Some(row_id) = row.get("id").and_then(Value::as_i64) {
+                summaries.insert(row_id, row);
+            }
+        }
+    }
+    let type_name = response
+        .value
+        .get("fields")
+        .and_then(|fields| string_field(fields, "System.WorkItemType"))
+        .unwrap_or_default();
+    let labels = field_labels(config, &project, &type_name);
+    let relations = resolve_relations(&refs, &summaries, &config.url, &project, links_truncated);
+    parse_work_item_detail(&response.value, &labels, relations, &config.url, &project)
+        .ok_or_else(|| "Azure DevOps did not return that work item".to_string())
+}
+
+/// Reference name -> display name for a work item type, cached per
+/// organization, project and type for the life of the process. A failed read
+/// falls back to humanized reference names and is not cached.
+fn field_labels(
+    config: &AzureDevOpsConfig,
+    project: &str,
+    type_name: &str,
+) -> Arc<HashMap<String, String>> {
+    type Labels = Arc<HashMap<String, String>>;
+    static CACHE: OnceLock<Mutex<HashMap<String, Labels>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = format!("{}\u{0}{}\u{0}{}", config.url, project, type_name);
+    if let Some(hit) = cache.lock().ok().and_then(|map| map.get(&key).cloned()) {
+        return hit;
+    }
+    if type_name.trim().is_empty() {
+        return Arc::new(HashMap::new());
+    }
+    let path = format!(
+        "/{}/_apis/wit/workitemtypes/{}/fields?api-version={API_VERSION}",
+        encode_segment(project),
+        encode_segment(type_name)
+    );
+    match azure_get(config, &path) {
+        Ok(response) => {
+            let labels = Arc::new(parse_field_labels(&response.value));
+            if let Ok(mut map) = cache.lock() {
+                map.insert(key, Arc::clone(&labels));
+            }
+            labels
+        }
+        Err(_) => Arc::new(HashMap::new()),
+    }
+}
+
+/// Which items "Assigned to me" should also include: those with a child
+/// assigned to the user, and which proposed items are already taken. Both are
+/// one link query each, scoped like the board itself.
+fn mine_scope(
+    config: &AzureDevOpsConfig,
+    project: &str,
+    team: &str,
+    query: &AzureBoardQuery,
+) -> Result<(MineScope, bool), String> {
+    let path = format!(
+        "{}/wit/wiql?$top={}&api-version={API_VERSION}",
+        team_api_path(project, team),
+        LINK_TOP + 1
+    );
+    let mut truncated = false;
+    let response = azure_post_json(
+        config,
+        &path,
+        json!({ "query": my_children_link_wiql(query)? }),
+    )?;
+    let (with_my_child, more) = link_source_ids(&response.value, LINK_TOP)?;
+    truncated |= more;
+    let taken_proposed = match taken_proposed_link_wiql(query)? {
+        Some(wiql) => {
+            let response = azure_post_json(config, &path, json!({ "query": wiql }))?;
+            let (ids, more) = link_source_ids(&response.value, LINK_TOP)?;
+            truncated |= more;
+            ids
+        }
+        None => Vec::new(),
+    };
+    let mut scope = MineScope {
+        with_my_child,
+        taken_proposed,
+    };
+    for ids in [&mut scope.with_my_child, &mut scope.taken_proposed] {
+        if ids.len() > MAX_IN_IDS {
+            ids.truncate(MAX_IN_IDS);
+            truncated = true;
+        }
+    }
+    Ok((scope, truncated))
 }
 
 fn fetch_type_states(
@@ -523,9 +911,15 @@ fn excluded_states(item_type: &AzureWorkItemTypeStates, include_done: bool) -> V
         .collect()
 }
 
+#[cfg(test)]
 fn board_wiql(query: &AzureBoardQuery) -> Result<String, String> {
-    let fields = query_dynamic_fields(query)?;
-    let mut clauses = vec!["[System.TeamProject] = @project".to_string()];
+    board_wiql_with(query, &MineScope::default())
+}
+
+/// WHERE clauses shared by the board query and its link queries. `prefix` is
+/// empty for flat queries and `[Source].` for link queries.
+fn base_clauses(query: &AzureBoardQuery, prefix: &str) -> Result<Vec<String>, String> {
+    let mut clauses = vec![format!("{prefix}[System.TeamProject] = @project")];
 
     let type_clauses: Vec<String> = query
         .types
@@ -533,7 +927,7 @@ fn board_wiql(query: &AzureBoardQuery) -> Result<String, String> {
         .filter(|item_type| !item_type.name.trim().is_empty())
         .map(|item_type| {
             let type_clause = format!(
-                "[System.WorkItemType] = {}",
+                "{prefix}[System.WorkItemType] = {}",
                 wiql_literal(item_type.name.trim())
             );
             let excluded = excluded_states(item_type, query.include_done);
@@ -545,7 +939,7 @@ fn board_wiql(query: &AzureBoardQuery) -> Result<String, String> {
                     .map(|name| wiql_literal(name))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("({type_clause} AND [System.State] NOT IN ({names}))")
+                format!("({type_clause} AND {prefix}[System.State] NOT IN ({names}))")
             }
         })
         .collect();
@@ -561,7 +955,7 @@ fn board_wiql(query: &AzureBoardQuery) -> Result<String, String> {
         .map(|area| {
             let operator = if area.include_children { "UNDER" } else { "=" };
             format!(
-                "[System.AreaPath] {operator} {}",
+                "{prefix}[System.AreaPath] {operator} {}",
                 wiql_literal(area.path.trim())
             )
         })
@@ -575,22 +969,90 @@ fn board_wiql(query: &AzureBoardQuery) -> Result<String, String> {
     match &query.iteration {
         AzureIterationFilter::Any => {}
         AzureIterationFilter::Current => {
-            clauses.push("[System.IterationPath] = @CurrentIteration".into());
+            clauses.push(format!(
+                "{prefix}[System.IterationPath] = @CurrentIteration"
+            ));
         }
         AzureIterationFilter::Path { path } => {
             if !path.trim().is_empty() {
                 clauses.push(format!(
-                    "[System.IterationPath] UNDER {}",
+                    "{prefix}[System.IterationPath] UNDER {}",
                     wiql_literal(path.trim())
                 ));
             }
         }
     }
+    Ok(clauses)
+}
 
-    if query.assigned_to_me {
-        clauses.push("[System.AssignedTo] = @Me".into());
+/// Items in a Proposed-category state, per type, or `None` when no type has
+/// known Proposed states. These are the items nobody has taken yet.
+fn proposed_clause(query: &AzureBoardQuery, prefix: &str) -> Option<String> {
+    let parts: Vec<String> = query
+        .types
+        .iter()
+        .filter(|item_type| !item_type.name.trim().is_empty())
+        .filter_map(|item_type| {
+            let names: Vec<String> = item_type
+                .states
+                .iter()
+                .filter(|state| state.category.eq_ignore_ascii_case("proposed"))
+                .map(|state| wiql_literal(state.name.trim()))
+                .collect();
+            if names.is_empty() {
+                return None;
+            }
+            Some(format!(
+                "({prefix}[System.WorkItemType] = {} AND {prefix}[System.State] IN ({}))",
+                wiql_literal(item_type.name.trim()),
+                names.join(", ")
+            ))
+        })
+        .collect();
+    match parts.len() {
+        0 => None,
+        1 => Some(parts[0].clone()),
+        _ => Some(format!("({})", parts.join(" OR "))),
     }
+}
 
+fn id_list(ids: &[i64]) -> String {
+    ids.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// "Assigned to me" on this board: assigned directly, holding a child, or a
+/// Proposed item nobody has taken through an assigned child. The item's own
+/// Assigned To does not make it taken; on this team it names the requester.
+fn mine_clause(query: &AzureBoardQuery, scope: &MineScope) -> String {
+    let mut parts = vec!["[System.AssignedTo] = @Me".to_string()];
+    if !scope.with_my_child.is_empty() {
+        parts.push(format!(
+            "[System.Id] IN ({})",
+            id_list(&scope.with_my_child)
+        ));
+    }
+    if let Some(proposed) = proposed_clause(query, "") {
+        parts.push(if scope.taken_proposed.is_empty() {
+            proposed
+        } else {
+            format!(
+                "({proposed} AND [System.Id] NOT IN ({}))",
+                id_list(&scope.taken_proposed)
+            )
+        });
+    }
+    format!("({})", parts.join(" OR "))
+}
+
+fn board_wiql_with(query: &AzureBoardQuery, scope: &MineScope) -> Result<String, String> {
+    let fields = query_dynamic_fields(query)?;
+    let mut clauses = base_clauses(query, "")?;
+    if query.assigned_to_me {
+        clauses.push(mine_clause(query, scope));
+    }
     let order = match &fields.order {
         Some(field) => format!("[{field}] ASC, [System.Id] ASC"),
         None => "[System.ChangedDate] DESC".into(),
@@ -599,6 +1061,71 @@ fn board_wiql(query: &AzureBoardQuery) -> Result<String, String> {
         "SELECT [System.Id] FROM WorkItems WHERE {} ORDER BY {order}",
         clauses.join(" AND ")
     ))
+}
+
+/// Parent -> child links from board items matching `source` to children
+/// matching `target`. The result lists the parents (`source.id`).
+fn link_wiql(source: &[String], target: &str) -> String {
+    format!(
+        "SELECT [System.Id] FROM WorkItemLinks WHERE ({}) AND \
+         ([System.Links.LinkType] = 'System.LinkTypes.Hierarchy-Forward') AND \
+         ({target}) MODE (MustContain)",
+        source.join(" AND ")
+    )
+}
+
+/// Board items with a child assigned to the connected user.
+fn my_children_link_wiql(query: &AzureBoardQuery) -> Result<String, String> {
+    let source = base_clauses(query, "[Source].")?;
+    Ok(link_wiql(&source, "[Target].[System.AssignedTo] = @Me"))
+}
+
+/// Proposed board items that someone took through an assigned child, or
+/// `None` when the board's types have no known Proposed states.
+fn taken_proposed_link_wiql(query: &AzureBoardQuery) -> Result<Option<String>, String> {
+    let Some(proposed) = proposed_clause(query, "[Source].") else {
+        return Ok(None);
+    };
+    let mut source = base_clauses(query, "[Source].")?;
+    source.push(proposed);
+    Ok(Some(link_wiql(
+        &source,
+        "[Target].[System.AssignedTo] <> ''",
+    )))
+}
+
+/// Parent ids from a link query: the `source` of every row with a link type.
+/// Rows without one are the roots the query lists before their links.
+fn link_source_ids(value: &Value, top: usize) -> Result<(Vec<i64>, bool), String> {
+    let rows = value
+        .get("workItemRelations")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Azure DevOps did not return work item links".to_string())?;
+    let mut seen = HashSet::new();
+    let ids = rows
+        .iter()
+        .filter(|row| row.get("rel").and_then(Value::as_str).is_some())
+        .filter_map(|row| row.get("source")?.get("id")?.as_i64())
+        .filter(|id| *id > 0 && seen.insert(*id))
+        .collect();
+    Ok((ids, rows.len() > top))
+}
+
+/// Children of the given parents, newest change first.
+fn children_wiql(parent_ids: &[i64]) -> String {
+    format!(
+        "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND \
+         [System.Parent] IN ({}) ORDER BY [System.ChangedDate] DESC",
+        id_list(parent_ids)
+    )
+}
+
+fn unique_positive_ids(ids: &[i64]) -> Vec<i64> {
+    let mut seen = HashSet::new();
+    ids.iter()
+        .copied()
+        .filter(|id| *id > 0 && seen.insert(*id))
+        .collect()
 }
 
 /// The WIQL asks for one id past the limit so a full page reports truncation.
@@ -1005,6 +1532,7 @@ fn parse_assigned_to(value: Option<&Value>) -> Option<AzureBoardAssignee> {
     if let Some(text) = value.as_str() {
         let text = text.trim();
         return (!text.is_empty()).then(|| AzureBoardAssignee {
+            id: String::new(),
             display_name: text.to_string(),
             unique_name: String::new(),
             image_url: String::new(),
@@ -1012,6 +1540,7 @@ fn parse_assigned_to(value: Option<&Value>) -> Option<AzureBoardAssignee> {
     }
     let display_name = string_field(value, "displayName").filter(|name| !name.is_empty())?;
     Some(AzureBoardAssignee {
+        id: string_field(value, "id").unwrap_or_default(),
         display_name,
         unique_name: string_field(value, "uniqueName").unwrap_or_default(),
         image_url: string_field(value, "imageUrl").unwrap_or_default(),
@@ -1079,6 +1608,417 @@ fn parse_board_item(
         board_column_done,
         project,
         url,
+    })
+}
+
+/// Fields read for children and for related-item summaries.
+const CHILD_FIELDS: [&str; 8] = [
+    "System.Id",
+    "System.WorkItemType",
+    "System.Title",
+    "System.State",
+    "System.AssignedTo",
+    "System.Parent",
+    "System.ChangedDate",
+    "System.TeamProject",
+];
+
+/// Scalar fields the detail view's planning section shows, in this order,
+/// ahead of the process's `Custom.*` fields.
+const PLANNING_FIELDS: [&str; 18] = [
+    "Microsoft.VSTS.Scheduling.StoryPoints",
+    "Microsoft.VSTS.Scheduling.Effort",
+    "Microsoft.VSTS.Scheduling.Size",
+    "Microsoft.VSTS.Scheduling.OriginalEstimate",
+    "Microsoft.VSTS.Scheduling.RemainingWork",
+    "Microsoft.VSTS.Scheduling.CompletedWork",
+    "Microsoft.VSTS.Common.Priority",
+    "Microsoft.VSTS.Common.ValueArea",
+    "Microsoft.VSTS.Common.Risk",
+    "Microsoft.VSTS.Common.BusinessValue",
+    "Microsoft.VSTS.Common.TimeCriticality",
+    "Microsoft.VSTS.Common.Severity",
+    "Microsoft.VSTS.Common.Activity",
+    "Microsoft.VSTS.Scheduling.StartDate",
+    "Microsoft.VSTS.Scheduling.FinishDate",
+    "Microsoft.VSTS.Scheduling.TargetDate",
+    "Microsoft.VSTS.Scheduling.DueDate",
+    "Microsoft.VSTS.CMMI.Blocked",
+];
+
+/// Rich-text fields shown as their own sections, in this order, ahead of the
+/// process's `Custom.*` HTML fields.
+const HTML_FIELDS: [&str; 4] = [
+    "Microsoft.VSTS.Common.AcceptanceCriteria",
+    "Microsoft.VSTS.TCM.ReproSteps",
+    "Microsoft.VSTS.TCM.SystemInfo",
+    "Microsoft.VSTS.CMMI.Symptom",
+];
+
+fn item_web_url(row: &Value, base_url: &str, project: &str, id: i64) -> String {
+    row.get("_links")
+        .and_then(|links| links.get("html"))
+        .and_then(|html| string_field(html, "href"))
+        .filter(|href| !href.is_empty())
+        .unwrap_or_else(|| work_item_web_url(base_url, project, id))
+}
+
+fn parse_child(row: &Value, base_url: &str, fallback_project: &str) -> Option<AzureBoardChild> {
+    let id = row.get("id").and_then(Value::as_i64).filter(|id| *id > 0)?;
+    let fields = row.get("fields")?;
+    let parent_id = number_field(fields, Some("System.Parent"))
+        .map(|value| value as i64)
+        .filter(|id| *id > 0)?;
+    let project = string_field(fields, "System.TeamProject")
+        .filter(|project| !project.is_empty())
+        .unwrap_or_else(|| fallback_project.to_string());
+    let text = |key: &str| string_field(fields, key).unwrap_or_default();
+    Some(AzureBoardChild {
+        id,
+        parent_id,
+        work_item_type: text("System.WorkItemType"),
+        title: text("System.Title"),
+        state: text("System.State"),
+        assigned_to: parse_assigned_to(fields.get("System.AssignedTo")),
+        changed_date: text("System.ChangedDate"),
+        url: item_web_url(row, base_url, &project, id),
+    })
+}
+
+fn parse_related(
+    row: &Value,
+    link: &str,
+    base_url: &str,
+    fallback_project: &str,
+) -> Option<AzureRelatedItem> {
+    let id = row.get("id").and_then(Value::as_i64).filter(|id| *id > 0)?;
+    let fields = row.get("fields")?;
+    let project = string_field(fields, "System.TeamProject")
+        .filter(|project| !project.is_empty())
+        .unwrap_or_else(|| fallback_project.to_string());
+    let text = |key: &str| string_field(fields, key).unwrap_or_default();
+    Some(AzureRelatedItem {
+        id,
+        link: link.to_string(),
+        work_item_type: text("System.WorkItemType"),
+        title: text("System.Title"),
+        state: text("System.State"),
+        assigned_to: parse_assigned_to(fields.get("System.AssignedTo")),
+        changed_date: text("System.ChangedDate"),
+        url: item_web_url(row, base_url, &project, id),
+    })
+}
+
+/// `referenceName -> name` from `workitemtypes/{type}/fields`.
+fn parse_field_labels(value: &Value) -> HashMap<String, String> {
+    value
+        .get("value")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            let reference = string_field(row, "referenceName").filter(|name| !name.is_empty())?;
+            let name = string_field(row, "name").filter(|name| !name.is_empty())?;
+            Some((reference, name))
+        })
+        .collect()
+}
+
+/// The id at the end of a work item URL (`.../_apis/wit/workItems/386818`).
+fn relation_target_id(url: &str) -> Option<i64> {
+    url.trim_end_matches('/')
+        .rsplit('/')
+        .next()?
+        .parse::<i64>()
+        .ok()
+        .filter(|id| *id > 0)
+}
+
+fn parse_relation_refs(value: &Value) -> RelationRefs {
+    let mut refs = RelationRefs::default();
+    let rows = value
+        .get("relations")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    for row in rows {
+        let rel = string_field(row, "rel").unwrap_or_default();
+        let name = row
+            .get("attributes")
+            .and_then(|attributes| string_field(attributes, "name"))
+            .unwrap_or_default();
+        let url = string_field(row, "url").unwrap_or_default();
+        match rel.as_str() {
+            "System.LinkTypes.Hierarchy-Reverse" => {
+                if refs.parent.is_none() {
+                    refs.parent = relation_target_id(&url);
+                }
+            }
+            "System.LinkTypes.Hierarchy-Forward" => {
+                if let Some(id) = relation_target_id(&url) {
+                    refs.children.push(id);
+                }
+            }
+            "AttachedFile" => refs.attachments.push(if name.is_empty() {
+                "Attachment".into()
+            } else {
+                name
+            }),
+            "ArtifactLink" => {
+                if name.eq_ignore_ascii_case("Pull Request") {
+                    refs.pull_requests += 1;
+                } else if name.to_ascii_lowercase().contains("commit")
+                    || name.to_ascii_lowercase().contains("changeset")
+                {
+                    refs.commits += 1;
+                }
+            }
+            "Hyperlink" | "" => {}
+            _ => {
+                if let Some(id) = relation_target_id(&url) {
+                    let label = if name.is_empty() {
+                        rel.rsplit(['.', '-'])
+                            .next()
+                            .unwrap_or("Related")
+                            .to_string()
+                    } else {
+                        name
+                    };
+                    refs.related.push((id, label));
+                }
+            }
+        }
+    }
+    refs
+}
+
+impl RelationRefs {
+    /// Ids to resolve, parent first, then children, then the rest; capped.
+    fn linked_ids(&self, max: usize) -> (Vec<i64>, bool) {
+        let mut ids: Vec<i64> = self
+            .parent
+            .into_iter()
+            .chain(self.children.iter().copied())
+            .chain(self.related.iter().map(|(id, _)| *id))
+            .collect();
+        ids = unique_positive_ids(&ids);
+        let truncated = ids.len() > max;
+        ids.truncate(max);
+        (ids, truncated)
+    }
+}
+
+fn resolve_relations(
+    refs: &RelationRefs,
+    summaries: &HashMap<i64, Value>,
+    base_url: &str,
+    project: &str,
+    truncated: bool,
+) -> AzureWorkItemRelations {
+    let resolve = |id: i64, link: &str| {
+        summaries
+            .get(&id)
+            .and_then(|row| parse_related(row, link, base_url, project))
+    };
+    AzureWorkItemRelations {
+        parent: refs.parent.and_then(|id| resolve(id, "Parent")),
+        children: refs
+            .children
+            .iter()
+            .filter_map(|id| resolve(*id, "Child"))
+            .collect(),
+        related: refs
+            .related
+            .iter()
+            .filter_map(|(id, link)| resolve(*id, link))
+            .collect(),
+        pull_requests: refs.pull_requests,
+        commits: refs.commits,
+        attachments: refs.attachments.clone(),
+        truncated,
+    }
+}
+
+/// `Custom.AtivoIntangivel` -> `Ativo Intangivel`, for fields the type's
+/// field list did not name.
+fn humanize_reference(reference: &str) -> String {
+    let leaf = reference.rsplit('.').next().unwrap_or(reference);
+    let mut out = String::with_capacity(leaf.len() + 4);
+    let mut previous_lower = false;
+    for ch in leaf.chars() {
+        if ch.is_ascii_uppercase() && previous_lower {
+            out.push(' ');
+        }
+        out.push(ch);
+        previous_lower = ch.is_lowercase() || ch.is_ascii_digit();
+    }
+    out
+}
+
+fn looks_like_html(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes
+        .windows(2)
+        .any(|pair| pair[0] == b'<' && (pair[1].is_ascii_alphabetic() || pair[1] == b'/'))
+}
+
+fn looks_like_date(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() >= 10
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[4] == b'-'
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[7] == b'-'
+        && bytes[8..10].iter().all(u8::is_ascii_digit)
+        && (bytes.len() == 10 || bytes[10] == b'T')
+}
+
+fn format_number(value: f64) -> String {
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        format!("{}", value as i64)
+    } else {
+        let text = format!("{value:.2}");
+        text.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
+/// A scalar field as the planning section shows it, or `None` for empty
+/// values, HTML and anything else that is not a scalar.
+fn scalar_field(reference: &str, label: &str, value: &Value) -> Option<AzureWorkItemField> {
+    let (text, kind) = match value {
+        Value::String(text) => {
+            let text = text.trim();
+            if text.is_empty() || looks_like_html(text) {
+                return None;
+            }
+            let kind = if looks_like_date(text) {
+                "date"
+            } else {
+                "text"
+            };
+            (text.to_string(), kind)
+        }
+        Value::Number(number) => (format_number(number.as_f64()?), "number"),
+        Value::Bool(flag) => ((if *flag { "Yes" } else { "No" }).to_string(), "bool"),
+        Value::Object(_) => (
+            string_field(value, "displayName").filter(|name| !name.is_empty())?,
+            "identity",
+        ),
+        _ => return None,
+    };
+    Some(AzureWorkItemField {
+        reference_name: reference.to_string(),
+        label: label.to_string(),
+        value: text,
+        kind: kind.to_string(),
+    })
+}
+
+fn html_section(reference: &str, label: &str, value: &Value) -> Option<AzureHtmlSection> {
+    let html = value.as_str()?.trim();
+    if html.is_empty() {
+        return None;
+    }
+    Some(AzureHtmlSection {
+        reference_name: reference.to_string(),
+        label: label.to_string(),
+        html: html.to_string(),
+    })
+}
+
+fn parse_work_item_detail(
+    row: &Value,
+    labels: &HashMap<String, String>,
+    relations: AzureWorkItemRelations,
+    base_url: &str,
+    fallback_project: &str,
+) -> Option<AzureWorkItemDetail> {
+    let id = row.get("id").and_then(Value::as_i64).filter(|id| *id > 0)?;
+    let fields = row.get("fields")?.as_object()?;
+    let value = |key: &str| fields.get(key);
+    let text = |key: &str| {
+        value(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let label = |reference: &str| {
+        labels
+            .get(reference)
+            .cloned()
+            .unwrap_or_else(|| humanize_reference(reference))
+    };
+    let project = Some(text("System.TeamProject"))
+        .filter(|project| !project.is_empty())
+        .unwrap_or_else(|| fallback_project.to_string());
+
+    let mut planning: Vec<AzureWorkItemField> = PLANNING_FIELDS
+        .iter()
+        .filter_map(|reference| scalar_field(reference, &label(reference), value(reference)?))
+        .collect();
+    let mut sections: Vec<AzureHtmlSection> = HTML_FIELDS
+        .iter()
+        .filter_map(|reference| html_section(reference, &label(reference), value(reference)?))
+        .collect();
+    let mut custom: Vec<(&String, &Value)> = fields
+        .iter()
+        .filter(|(reference, _)| reference.starts_with("Custom."))
+        .collect();
+    custom.sort_by_key(|(reference, _)| label(reference).to_lowercase());
+    for (reference, field) in custom {
+        let name = label(reference);
+        if let Some(scalar) = scalar_field(reference, &name, field) {
+            planning.push(scalar);
+        } else if field.as_str().is_some_and(looks_like_html) {
+            if let Some(section) = html_section(reference, &name, field) {
+                sections.push(section);
+            }
+        }
+    }
+
+    Some(AzureWorkItemDetail {
+        id,
+        rev: row
+            .get("rev")
+            .and_then(Value::as_i64)
+            .or_else(|| value("System.Rev").and_then(Value::as_i64))
+            .unwrap_or(0),
+        work_item_type: text("System.WorkItemType"),
+        title: text("System.Title"),
+        state: text("System.State"),
+        reason: text("System.Reason"),
+        assigned_to: parse_assigned_to(value("System.AssignedTo")),
+        created_by: parse_assigned_to(value("System.CreatedBy")),
+        changed_by: parse_assigned_to(value("System.ChangedBy")),
+        created_date: text("System.CreatedDate"),
+        changed_date: text("System.ChangedDate"),
+        area_path: text("System.AreaPath"),
+        iteration_path: text("System.IterationPath"),
+        tags: text("System.Tags")
+            .split(';')
+            .map(str::trim)
+            .filter(|tag| !tag.is_empty())
+            .map(str::to_string)
+            .collect(),
+        comment_count: value("System.CommentCount")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        description_html: text("System.Description"),
+        sections,
+        planning,
+        story_points: number_field(
+            &Value::Object(fields.clone()),
+            Some("Microsoft.VSTS.Scheduling.StoryPoints"),
+        ),
+        priority: number_field(
+            &Value::Object(fields.clone()),
+            Some("Microsoft.VSTS.Common.Priority"),
+        )
+        .map(|value| value.round() as i64),
+        relations,
+        url: item_web_url(row, base_url, &project, id),
+        project,
     })
 }
 
@@ -1280,7 +2220,12 @@ mod tests {
         query.order_field = None;
         query.assigned_to_me = true;
         let wiql = board_wiql(&query).unwrap();
-        assert!(wiql.ends_with("AND [System.AssignedTo] = @Me ORDER BY [System.ChangedDate] DESC"));
+        assert!(wiql.ends_with(
+            "AND ([System.AssignedTo] = @Me OR \
+             (([System.WorkItemType] = 'User Story' AND [System.State] IN ('New')) OR \
+             ([System.WorkItemType] = 'Bug' AND [System.State] IN ('New')))) \
+             ORDER BY [System.ChangedDate] DESC"
+        ));
     }
 
     #[test]
@@ -1790,5 +2735,361 @@ mod tests {
             ..base
         };
         assert!(board_move_ops(&injected).is_err());
+    }
+
+    #[test]
+    fn mine_clause_widens_to_children_and_untaken_proposed() {
+        let mut query = user_query();
+        query.assigned_to_me = true;
+        let scope = MineScope {
+            with_my_child: vec![376073, 381316],
+            taken_proposed: vec![367222],
+        };
+        let wiql = board_wiql_with(&query, &scope).unwrap();
+        assert!(wiql.contains(
+            "AND ([System.AssignedTo] = @Me OR [System.Id] IN (376073, 381316) OR \
+             ((([System.WorkItemType] = 'User Story' AND [System.State] IN ('New')) OR \
+             ([System.WorkItemType] = 'Bug' AND [System.State] IN ('New'))) AND \
+             [System.Id] NOT IN (367222))) ORDER BY"
+        ));
+        // No scope at all: every Proposed item is still available.
+        let wiql = board_wiql_with(&query, &MineScope::default()).unwrap();
+        assert!(wiql
+            .contains("OR (([System.WorkItemType] = 'User Story' AND [System.State] IN ('New'))"));
+        assert!(!wiql.contains("[System.Id] IN"));
+        // Types without known states: only the direct assignment is left.
+        query.types = vec![AzureWorkItemTypeStates {
+            name: "User Story".into(),
+            states: Vec::new(),
+        }];
+        let wiql = board_wiql_with(&query, &scope).unwrap();
+        assert!(wiql.contains(
+            "AND ([System.AssignedTo] = @Me OR [System.Id] IN (376073, 381316)) ORDER BY"
+        ));
+        assert!(!wiql.contains("[System.Id] NOT IN"));
+        // Off: nothing about the user at all.
+        query.assigned_to_me = false;
+        assert!(!board_wiql_with(&query, &scope).unwrap().contains("@Me"));
+    }
+
+    #[test]
+    fn builds_link_wiql_with_source_prefix() {
+        let query = user_query();
+        assert_eq!(
+            my_children_link_wiql(&query).unwrap(),
+            "SELECT [System.Id] FROM WorkItemLinks WHERE ([Source].[System.TeamProject] = @project AND \
+             (([Source].[System.WorkItemType] = 'User Story' AND [Source].[System.State] NOT IN ('Closed', 'Removed')) OR \
+             ([Source].[System.WorkItemType] = 'Bug' AND [Source].[System.State] NOT IN ('Closed', 'Removed'))) AND \
+             [Source].[System.AreaPath] = 'TI Banese\\SUTEC App Banese Frontend Manutenção' AND \
+             [Source].[System.IterationPath] = @CurrentIteration) AND \
+             ([System.Links.LinkType] = 'System.LinkTypes.Hierarchy-Forward') AND \
+             ([Target].[System.AssignedTo] = @Me) MODE (MustContain)"
+        );
+        let taken = taken_proposed_link_wiql(&query).unwrap().unwrap();
+        assert!(taken.contains(
+            "AND (([Source].[System.WorkItemType] = 'User Story' AND [Source].[System.State] IN ('New')) OR \
+             ([Source].[System.WorkItemType] = 'Bug' AND [Source].[System.State] IN ('New')))) AND"
+        ));
+        assert!(taken.ends_with("([Target].[System.AssignedTo] <> '') MODE (MustContain)"));
+        let mut stateless = query.clone();
+        stateless.types = vec![AzureWorkItemTypeStates {
+            name: "Bug".into(),
+            states: Vec::new(),
+        }];
+        assert_eq!(taken_proposed_link_wiql(&stateless).unwrap(), None);
+    }
+
+    #[test]
+    fn reads_link_sources_and_flags_truncation() {
+        let value = json!({ "workItemRelations": [
+            { "rel": null, "source": null, "target": { "id": 376073 } },
+            { "rel": "System.LinkTypes.Hierarchy-Forward", "source": { "id": 376073 }, "target": { "id": 386818 } },
+            { "rel": "System.LinkTypes.Hierarchy-Forward", "source": { "id": 376073 }, "target": { "id": 386819 } },
+            { "rel": "System.LinkTypes.Hierarchy-Forward", "source": { "id": 381316 }, "target": { "id": 1 } }
+        ]});
+        assert_eq!(
+            link_source_ids(&value, 10).unwrap(),
+            (vec![376073, 381316], false)
+        );
+        assert_eq!(
+            link_source_ids(&value, 3).unwrap(),
+            (vec![376073, 381316], true)
+        );
+        assert!(link_source_ids(&json!({}), 3).is_err());
+    }
+
+    #[test]
+    fn builds_children_wiql_and_dedupes_parents() {
+        assert_eq!(unique_positive_ids(&[3, 0, 3, -1, 1]), vec![3, 1]);
+        assert_eq!(
+            children_wiql(&[376073, 359655]),
+            "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND \
+             [System.Parent] IN (376073, 359655) ORDER BY [System.ChangedDate] DESC"
+        );
+    }
+
+    #[test]
+    fn parses_children_rows() {
+        let row = json!({
+            "id": 386818,
+            "fields": {
+                "System.WorkItemType": "Task",
+                "System.Title": "Em implementação",
+                "System.State": "Completed",
+                "System.Parent": 376073,
+                "System.ChangedDate": "2026-10-16T17:18:16.3Z",
+                "System.TeamProject": "TI Banese",
+                "System.AssignedTo": { "id": "u-1", "displayName": "Luiz Gustavo Moura" }
+            }
+        });
+        let child = parse_child(&row, "https://dev.azure.com/BaneseAgile", "x").unwrap();
+        assert_eq!(child.parent_id, 376073);
+        assert_eq!(
+            child.assigned_to.as_ref().map(|a| a.id.as_str()),
+            Some("u-1")
+        );
+        assert_eq!(
+            child.url,
+            "https://dev.azure.com/BaneseAgile/TI%20Banese/_workitems/edit/386818"
+        );
+        let value = serde_json::to_value(&child).unwrap();
+        assert_eq!(value["parentId"], 376073);
+        assert_eq!(value["assignedTo"]["id"], "u-1");
+        // A parent given as text still parses; a missing parent is skipped.
+        let mut text_parent = row.clone();
+        text_parent["fields"]["System.Parent"] = json!("376073");
+        assert!(parse_child(&text_parent, "u", "p").is_some());
+        let mut orphan = row.clone();
+        orphan["fields"]
+            .as_object_mut()
+            .unwrap()
+            .remove("System.Parent");
+        assert!(parse_child(&orphan, "u", "p").is_none());
+    }
+
+    fn detail_fixture() -> Value {
+        json!({
+            "id": 376073,
+            "rev": 41,
+            "fields": {
+                "System.WorkItemType": "User Story",
+                "System.Title": "Android - PF - Integração Reformulação do Menu ajuda - Flutter",
+                "System.State": "Accepted",
+                "System.Reason": "Moved out of state Completed",
+                "System.TeamProject": "TI Banese",
+                "System.AreaPath": "TI Banese\\SUTEC App Banese\\SUTEC App Banese Frontend Manutenção",
+                "System.IterationPath": "TI Banese\\2026_R4\\S01 - R4_2026",
+                "System.Tags": "Android; PF",
+                "System.CommentCount": 2,
+                "System.CreatedDate": "2026-08-31T19:06:04.983Z",
+                "System.ChangedDate": "2026-10-14T13:27:41.983Z",
+                "System.CreatedBy": { "id": "u-v", "displayName": "Vanessa" },
+                "System.ChangedBy": { "id": "u-m", "displayName": "Marco" },
+                "System.AssignedTo": { "id": "u-v", "displayName": "Vanessa" },
+                "System.Description": "<div><p><b>Como</b> cliente</p></div>",
+                "System.Parent": 359655,
+                "Microsoft.VSTS.Scheduling.StoryPoints": 2.0,
+                "Microsoft.VSTS.Common.Priority": 2,
+                "Microsoft.VSTS.Common.ValueArea": "Business",
+                "Microsoft.VSTS.Common.StackRank": 2151.0,
+                "Microsoft.VSTS.CMMI.Blocked": "No",
+                "Custom.89fdb5bb": "<div><h3>Critérios de Aceite</h3></div>",
+                "Custom.4f67a0eb": "",
+                "Custom.4b5b5242": "Investimento",
+                "Custom.Refinada": true,
+                "Custom.AtivoIntangivel": "2000000734 - PRODUTOS APP",
+                "WEF_B358_Kanban.Column": "Accepted"
+            },
+            "relations": [
+                { "rel": "System.LinkTypes.Related", "url": "https://dev.azure.com/o/_apis/wit/workItems/376075", "attributes": { "name": "Related" } },
+                { "rel": "System.LinkTypes.Hierarchy-Forward", "url": "https://dev.azure.com/o/_apis/wit/workItems/386818", "attributes": { "name": "Child" } },
+                { "rel": "System.LinkTypes.Hierarchy-Reverse", "url": "https://dev.azure.com/o/_apis/wit/workItems/359655", "attributes": { "name": "Parent" } },
+                { "rel": "ArtifactLink", "url": "vstfs:///Git/PullRequestId/x", "attributes": { "name": "Pull Request" } },
+                { "rel": "ArtifactLink", "url": "vstfs:///Git/Commit/x", "attributes": { "name": "Fixed in Commit" } },
+                { "rel": "ArtifactLink", "url": "vstfs:///Git/PullRequestId/y", "attributes": { "name": "Pull Request" } },
+                { "rel": "AttachedFile", "url": "https://dev.azure.com/o/_apis/wit/attachments/a", "attributes": { "name": "menu ajuda.mp4" } },
+                { "rel": "System.LinkTypes.Dependency-Forward", "url": "https://dev.azure.com/o/_apis/wit/workItems/400000", "attributes": { "name": "Successor" } },
+                { "rel": "Hyperlink", "url": "https://docs.example.com", "attributes": {} }
+            ]
+        })
+    }
+
+    #[test]
+    fn reads_relation_refs_in_order() {
+        let refs = parse_relation_refs(&detail_fixture());
+        assert_eq!(refs.parent, Some(359655));
+        assert_eq!(refs.children, vec![386818]);
+        assert_eq!(
+            refs.related,
+            vec![
+                (376075, "Related".to_string()),
+                (400000, "Successor".to_string())
+            ]
+        );
+        assert_eq!((refs.pull_requests, refs.commits), (2, 1));
+        assert_eq!(refs.attachments, vec!["menu ajuda.mp4"]);
+        assert_eq!(
+            refs.linked_ids(10),
+            (vec![359655, 386818, 376075, 400000], false)
+        );
+        assert_eq!(refs.linked_ids(2), (vec![359655, 386818], true));
+        assert_eq!(
+            relation_target_id("https://x/_apis/wit/workItems/12/"),
+            Some(12)
+        );
+        assert_eq!(relation_target_id("vstfs:///Git/Commit/abc"), None);
+    }
+
+    #[test]
+    fn parses_the_work_item_detail() {
+        let labels: HashMap<String, String> = [
+            ("Custom.89fdb5bb", "Critérios de Aceite"),
+            ("Custom.4f67a0eb", "Área Demandante"),
+            ("Custom.4b5b5242", "Tipo de Orçamento"),
+            ("Microsoft.VSTS.Scheduling.StoryPoints", "Story Points"),
+            ("Microsoft.VSTS.Common.ValueArea", "Value Area"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect();
+        let summaries: HashMap<i64, Value> = [
+            (359655, json!({ "id": 359655, "fields": { "System.WorkItemType": "Feature", "System.Title": "AppBanese - Menu Ajuda", "System.State": "Em Desenvolvimento", "System.TeamProject": "TI Banese" } })),
+            (386818, json!({ "id": 386818, "fields": { "System.WorkItemType": "Task", "System.Title": "Em implementação", "System.State": "Completed", "System.AssignedTo": { "id": "u-l", "displayName": "Luiz" } } })),
+            (376075, json!({ "id": 376075, "fields": { "System.WorkItemType": "User Story", "System.Title": "iOS", "System.State": "Active" } })),
+        ]
+        .into_iter()
+        .collect();
+        let refs = parse_relation_refs(&detail_fixture());
+        let relations = resolve_relations(
+            &refs,
+            &summaries,
+            "https://dev.azure.com/o",
+            "TI Banese",
+            false,
+        );
+        let detail = parse_work_item_detail(
+            &detail_fixture(),
+            &labels,
+            relations,
+            "https://dev.azure.com/o",
+            "fallback",
+        )
+        .unwrap();
+        assert_eq!(detail.project, "TI Banese");
+        assert_eq!(detail.tags, vec!["Android", "PF"]);
+        assert_eq!(detail.comment_count, 2);
+        assert_eq!(detail.story_points, Some(2.0));
+        assert_eq!(detail.priority, Some(2));
+        assert_eq!(
+            detail.description_html,
+            "<div><p><b>Como</b> cliente</p></div>"
+        );
+        assert_eq!(
+            detail.created_by.as_ref().map(|u| u.display_name.as_str()),
+            Some("Vanessa")
+        );
+        assert_eq!(
+            detail.changed_by.as_ref().map(|u| u.display_name.as_str()),
+            Some("Marco")
+        );
+        let planning: Vec<(&str, &str, &str)> = detail
+            .planning
+            .iter()
+            .map(|field| {
+                (
+                    field.label.as_str(),
+                    field.value.as_str(),
+                    field.kind.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            planning,
+            vec![
+                ("Story Points", "2", "number"),
+                ("Priority", "2", "number"),
+                ("Value Area", "Business", "text"),
+                ("Blocked", "No", "text"),
+                ("Ativo Intangivel", "2000000734 - PRODUTOS APP", "text"),
+                ("Refinada", "Yes", "bool"),
+                ("Tipo de Orçamento", "Investimento", "text"),
+            ]
+        );
+        assert_eq!(detail.sections.len(), 1);
+        assert_eq!(detail.sections[0].label, "Critérios de Aceite");
+        assert_eq!(
+            detail.relations.parent.as_ref().map(|p| p.title.as_str()),
+            Some("AppBanese - Menu Ajuda")
+        );
+        assert_eq!(detail.relations.children.len(), 1);
+        assert_eq!(detail.relations.children[0].link, "Child");
+        assert_eq!(
+            detail.relations.children[0]
+                .assigned_to
+                .as_ref()
+                .map(|a| a.display_name.as_str()),
+            Some("Luiz")
+        );
+        // The successor was never resolved, so only the related story remains.
+        assert_eq!(detail.relations.related.len(), 1);
+        assert_eq!(
+            (detail.relations.pull_requests, detail.relations.commits),
+            (2, 1)
+        );
+        assert_eq!(
+            detail.url,
+            "https://dev.azure.com/o/TI%20Banese/_workitems/edit/376073"
+        );
+        let value = serde_json::to_value(&detail).unwrap();
+        assert_eq!(value["descriptionHtml"], detail.description_html);
+        assert_eq!(value["relations"]["pullRequests"], 2);
+        assert_eq!(
+            value["planning"][0]["referenceName"],
+            "Microsoft.VSTS.Scheduling.StoryPoints"
+        );
+        assert!(parse_work_item_detail(
+            &json!({}),
+            &labels,
+            AzureWorkItemRelations::default(),
+            "u",
+            "p"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn labels_and_scalars() {
+        assert_eq!(
+            humanize_reference("Custom.AtivoIntangivel"),
+            "Ativo Intangivel"
+        );
+        assert_eq!(humanize_reference("Custom.IDRALLY"), "IDRALLY");
+        assert_eq!(
+            humanize_reference("Microsoft.VSTS.Scheduling.StoryPoints"),
+            "Story Points"
+        );
+        assert_eq!(format_number(2.0), "2");
+        assert_eq!(format_number(2.5), "2.5");
+        assert_eq!(format_number(1999.25), "1999.25");
+        assert!(looks_like_html("<div>x</div>"));
+        assert!(!looks_like_html("a < b and c > d"));
+        assert!(looks_like_date("2026-10-14T13:27:41.983Z"));
+        assert!(!looks_like_date("2026-10"));
+        assert_eq!(scalar_field("x", "X", &json!("")), None);
+        assert_eq!(scalar_field("x", "X", &json!("<p>h</p>")), None);
+        assert_eq!(
+            scalar_field("x", "X", &json!({ "displayName": "Ada" })).map(|f| (f.value, f.kind)),
+            Some(("Ada".to_string(), "identity".to_string()))
+        );
+        assert_eq!(
+            scalar_field("x", "X", &json!("2026-10-14T13:27:41.983Z")).map(|f| f.kind),
+            Some("date".to_string())
+        );
+        let labels = parse_field_labels(&json!({ "value": [
+            { "referenceName": "Custom.A", "name": "Área" },
+            { "referenceName": "", "name": "skip" }
+        ]}));
+        assert_eq!(labels.get("Custom.A").map(String::as_str), Some("Área"));
+        assert_eq!(labels.len(), 1);
     }
 }
