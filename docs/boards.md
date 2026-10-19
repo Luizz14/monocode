@@ -28,8 +28,12 @@ narrow the items on the board:
 - **Areas**: the team's areas by default. Pick specific areas to override them,
   and turn on **Include sub-areas** to match everything below each one.
 - **Iteration**: the team's current sprint, any iteration, or a specific path.
-- **Text**: matches the title, ID, tags, and assignee.
-- **Assigned to me** and **Include done**.
+- **Text**: matches the title, ID, tags, assignee, the people holding the item
+  through its tasks, and the tasks' titles.
+- **Assigned to me** and **Include done**. On Azure DevOps, **Assigned to me**
+  also keeps items where one of your child tasks is, and items in a Proposed
+  state (such as New or Defined) that nobody has taken through an assigned
+  task yet. See [Who holds an item](#who-holds-an-item).
 
 The fastest way to fill these in is **Import from link**. Paste the address of a
 backlog, board, or sprint page from Azure DevOps, such as
@@ -68,10 +72,46 @@ A column that has no state for a card's type, such as a column that only maps
 User Stories when you drag a Bug, refuses the drop and says why. Cards keep the
 provider's order inside a column; reordering within a column is not supported.
 
-Click a card, or press Enter or Space, to open its menu: open it in Azure DevOps
-or Linear, copy its link or ID, start a chat about it, or move it.
-Cmd-click (Ctrl-click on Windows and Linux) opens it in the browser.
+Right-click a card, or press Shift+F10 or the Menu key on a focused one, to open
+its menu: view its details, open it in Azure DevOps or Linear, copy its link or
+ID, start a chat about it, or move it. Cmd-click (Ctrl-click on Windows and
+Linux) opens it in the browser.
 
 The **Filter cards** field in the toolbar narrows the visible cards without
 changing the saved board. Boards refresh every two minutes while the window is
 visible, and when you return to the window after a minute away.
+
+## Who holds an item
+
+Many teams take a User Story by creating a child task ("Em implementação",
+"Implementar", "Code Review") and assigning that task to themselves, while the
+story's own **Assigned To** keeps naming whoever requested it. On Azure DevOps
+boards, MonoCode loads every card's children and shows the people on them as
+the card's avatars, the person holding it first: someone with a task still in
+progress ranks first, then whoever has the most tasks, then the latest change.
+Hover an avatar to see that person's tasks and their states. Your own avatar is
+ringed in the accent color. A card with no assigned child falls back to its
+Assigned To. Removed tasks are ignored.
+
+The **Mine** chip in the toolbar keeps the cards you hold, through a task or
+through Assigned To, plus the cards in a Proposed state (New, Defined) that
+nobody has taken through an assigned task. Those are the ones still available
+to pick up. The chip is a quick filter and is not saved with the board; the
+board's **Assigned to me** setting applies the same rule on the server, so the
+item cap counts only the items it keeps.
+
+## Details
+
+Click a card, or press Enter or Space on a focused one, to open its details in a
+pane beside the columns. The pane follows the Azure DevOps work item form: type
+and ID, title, who holds it next to the Assigned To, comment count, tags, state
+with a **Move to** control, reason, area and iteration, the description and the
+other rich-text fields of the process, the planning fields with the process's
+own labels (Story Points, Área Demandante, and so on), related work with the
+parent, children and related items, and who last updated it. Drag the pane's
+left edge to resize it. Escape closes it.
+
+Descriptions are rendered from Azure's HTML with scripts, styles and embedded
+frames removed; links open in the browser, and images become links because
+Azure attachments need the token to load. The pane is read-only except for
+**Move to**, which saves like a drag.
