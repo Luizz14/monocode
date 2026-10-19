@@ -240,6 +240,10 @@ export function SafeHtml({
     () => sanitizeProviderHtml(html, { inlineImage: inline }),
     [html, inline],
   );
+  // One object per markup: React resets innerHTML whenever this prop is a
+  // new object, which would throw away the images filled in below on every
+  // re-render of the parent.
+  const markup = useMemo(() => ({ __html: clean }), [clean]);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -295,7 +299,7 @@ export function SafeHtml({
       className={`safe-html ${className ?? ""}`}
       onClick={onClick}
       // Rebuilt from an allowlist above; nothing else reaches here.
-      dangerouslySetInnerHTML={{ __html: clean }}
+      dangerouslySetInnerHTML={markup}
     />
   );
 }

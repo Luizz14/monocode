@@ -166,6 +166,38 @@ describe("SafeHtml", () => {
       expect(openUrl).not.toHaveBeenCalled();
     });
 
+    it("keeps a filled image through re-renders that change other props", async () => {
+      const resolveImage = vi.fn(async () => "data:image/png;base64,AAAA");
+      await act(async () =>
+        root.render(
+          createElement(SafeHtml, {
+            html,
+            inlineImage,
+            resolveImage,
+            onImageClick: () => {},
+          }),
+        ),
+      );
+      await settle();
+      const image = container.querySelector("img")!;
+      expect(image.getAttribute("src")).toBe("data:image/png;base64,AAAA");
+      // A parent re-render hands down a new click handler but the same html.
+      await act(async () =>
+        root.render(
+          createElement(SafeHtml, {
+            html,
+            inlineImage,
+            resolveImage,
+            onImageClick: () => {},
+          }),
+        ),
+      );
+      await settle();
+      expect(container.querySelector("img")).toBe(image);
+      expect(image.getAttribute("src")).toBe("data:image/png;base64,AAAA");
+      expect(resolveImage).toHaveBeenCalledTimes(1);
+    });
+
     it("falls back to the link when the image cannot be loaded", async () => {
       for (const resolveImage of [
         async () => null,
