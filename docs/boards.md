@@ -112,6 +112,15 @@ parent, children and related items, and who last updated it. Drag the pane's
 left edge to resize it. Escape closes it.
 
 Descriptions are rendered from Azure's HTML with scripts, styles and embedded
-frames removed; links open in the browser, and images become links because
-Azure attachments need the token to load. The pane is read-only except for
+frames removed; links open in the browser. The pane is read-only except for
 **Move to**, which saves like a drag.
+
+**Attachments** lists the item's files the way Azure does, with name, size, date
+added and comment. Images (PNG, JPEG, GIF, WebP and BMP up to 10 MB) show a
+thumbnail, and clicking one opens it full size; images pasted into a description
+or another rich-text field that belong to your organization load the same way,
+using your token, and open full size on click. Anything else downloads to a
+temporary folder and opens in the default app, up to 200 MB. SVG files are never
+shown inline, and programs and scripts (such as `.exe`, `.bat` and `.command`)
+are never opened from here; open those in Azure DevOps instead. An image that
+cannot be loaded falls back to a link.

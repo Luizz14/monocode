@@ -244,7 +244,8 @@ function detailFor(id: number): AzureWorkItemDetail {
     tags: ["Android", "PF"],
     commentCount: 2,
     descriptionHtml:
-      '<div><p><b>Como</b> cliente logado</p><script>alert(1)</script><a href="https://docs.example.com/x">doc</a></div>',
+      '<div><p><b>Como</b> cliente logado</p><script>alert(1)</script><a href="https://docs.example.com/x">doc</a>' +
+      '<img src="https://dev.azure.com/org/guid/_apis/wit/attachments/att-3?fileName=inline.png" alt=""></div>',
     sections: [
       {
         referenceName: "Custom.AC",
@@ -294,7 +295,24 @@ function detailFor(id: number): AzureWorkItemDetail {
       related: [],
       pullRequests: 2,
       commits: 1,
-      attachments: ["menu ajuda.mp4"],
+      attachments: [
+        {
+          id: "att-1",
+          name: "tela.png",
+          url: "https://dev.azure.com/org/guid/_apis/wit/attachments/att-1",
+          size: 526336,
+          createdDate: "2026-10-13T16:47:10.147Z",
+          comment: "Layout novo",
+        },
+        {
+          id: "att-2",
+          name: "menu ajuda.mp4",
+          url: "https://dev.azure.com/org/guid/_apis/wit/attachments/att-2",
+          size: 33030144,
+          createdDate: "2026-10-14T09:00:00.000Z",
+          comment: "",
+        },
+      ],
       truncated: false,
     },
     url: base.url,
@@ -304,6 +322,8 @@ function detailFor(id: number): AzureWorkItemDetail {
 let azureConnected: boolean;
 let moveResult: Deferred<AzureBoardItem> | null;
 let detailFails: boolean;
+let previewFails: boolean;
+let openFails: boolean;
 
 function route(command: string, args?: unknown): unknown {
   switch (command) {
@@ -341,6 +361,14 @@ function route(command: string, args?: unknown): unknown {
       const { id } = args as { project: string; id: number };
       return detailFor(id);
     }
+    case "azure_boards_attachment_preview":
+      if (previewFails) throw new Error("Attachment is too large to preview");
+      return { mimeType: "image/png", dataBase64: "AAAA" };
+    case "azure_boards_attachment_open":
+      if (openFails) throw new Error("Attachment is too large to open");
+      return "/tmp/monocode-ado-attachments/guid/menu ajuda.mp4";
+    case "open_path_with_default_app":
+      return null;
     default:
       throw new Error(`Unexpected command: ${command}`);
   }
@@ -447,6 +475,8 @@ beforeEach(() => {
   moveResult = null;
   invoke.mockReset();
   detailFails = false;
+  previewFails = false;
+  openFails = false;
   invoke.mockImplementation(async (command: string, args?: unknown) =>
     route(command, args),
   );
@@ -816,5 +846,152 @@ describe("BoardView", () => {
     act(() => close.click());
     await flush();
     expect(detailPane()).toBeNull();
+  });
+  describe("attachments", () => {
+    beforeEach(() => {
+      // Every row counts as on screen, so thumbnails load at once.
+      vi.stubGlobal(
+        "IntersectionObserver",
+        class {
+          constructor(private callback: (entries: unknown[]) => void) {}
+          observe() {
+            this.callback([{ isIntersecting: true }]);
+          }
+          disconnect() {}
+        },
+      );
+    });
+
+    async function openDetails(ref = "#10") {
+      storeBoards([azureBoard()]);
+      await render();
+      act(() => card(ref).click());
+      await flush();
+      return detailPane()!;
+    }
+
+    function attachmentRows(pane: HTMLElement): HTMLElement[] {
+      const heading = [...pane.querySelectorAll("h3")].find(
+        (h) => h.firstElementChild?.textContent === "Attachments",
+      );
+      return heading
+        ? [...heading.closest("section")!.querySelectorAll<HTMLElement>("li")]
+        : [];
+    }
+
+    it("lists attachments like Azure does, with a thumbnail for images", async () => {
+      const pane = await openDetails();
+      const rows = attachmentRows(pane);
+      expect(rows).toHaveLength(2);
+      const section = rows[0]!.closest("section")!;
+      expect(section.textContent).toContain("Name");
+      expect(section.textContent).toContain("Size");
+      expect(section.textContent).toContain("Date Added");
+      expect(section.textContent).toContain("Comments");
+      expect(rows[0]!.textContent).toContain("tela.png");
+      expect(rows[0]!.textContent).toContain("514 KB");
+      expect(rows[0]!.textContent).toContain("Layout novo");
+      expect(rows[0]!.textContent).toMatch(/2026/);
+      expect(rows[1]!.textContent).toContain("menu ajuda.mp4");
+      expect(rows[1]!.textContent).toContain("31.5 MB");
+      const thumb = rows[0]!.querySelector("img")!;
+      expect(thumb.getAttribute("src")).toBe("data:image/png;base64,AAAA");
+      expect(thumb.getAttribute("loading")).toBe("lazy");
+      // The video is a file: no picture, no download until it is clicked.
+      expect(rows[1]!.querySelector("img")).toBeNull();
+      expect(invoke).toHaveBeenCalledWith("azure_boards_attachment_preview", {
+        url: "https://dev.azure.com/org/guid/_apis/wit/attachments/att-1",
+        name: "tela.png",
+      });
+      expect(invoke).not.toHaveBeenCalledWith(
+        "azure_boards_attachment_open",
+        expect.anything(),
+      );
+      // A card whose item has no attachments gets no section.
+      expect(pane.textContent).not.toContain("No attachments");
+    });
+
+    it("opens an image in the lightbox", async () => {
+      const pane = await openDetails();
+      const button = attachmentRows(pane)[0]!.querySelector("button")!;
+      act(() => button.click());
+      await flush();
+      const lightbox = document.querySelector<HTMLElement>("[data-image-zoom]")!;
+      expect(lightbox.getAttribute("aria-label")).toBe("Image preview: tela.png");
+      expect(lightbox.querySelector("img")!.getAttribute("src")).toBe(
+        "data:image/png;base64,AAAA",
+      );
+      pressKey(window, { key: "Escape" });
+      await flush();
+      expect(document.querySelector("[data-image-zoom]")).toBeNull();
+      // Escape went to the lightbox, not to the pane or Boards.
+      expect(detailPane()).not.toBeNull();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it("downloads a file and hands it to the default app", async () => {
+      const pane = await openDetails();
+      const button = attachmentRows(pane)[1]!.querySelector("button")!;
+      act(() => button.click());
+      await flush();
+      expect(invoke).toHaveBeenCalledWith("azure_boards_attachment_open", {
+        url: "https://dev.azure.com/org/guid/_apis/wit/attachments/att-2",
+        name: "menu ajuda.mp4",
+      });
+      expect(invoke).toHaveBeenCalledWith("open_path_with_default_app", {
+        path: "/tmp/monocode-ado-attachments/guid/menu ajuda.mp4",
+      });
+      expect(button.getAttribute("aria-busy")).toBe("false");
+    });
+
+    it("shows the error on the row when a download fails", async () => {
+      openFails = true;
+      const pane = await openDetails();
+      const row = attachmentRows(pane)[1]!;
+      act(() => row.querySelector("button")!.click());
+      await flush();
+      expect(row.querySelector('[role="alert"]')?.textContent).toContain(
+        "Attachment is too large to open",
+      );
+      expect(invoke).not.toHaveBeenCalledWith(
+        "open_path_with_default_app",
+        expect.anything(),
+      );
+    });
+
+    it("falls back to an icon when a thumbnail cannot load", async () => {
+      previewFails = true;
+      const pane = await openDetails();
+      const row = attachmentRows(pane)[0]!;
+      expect(row.querySelector("img")).toBeNull();
+      expect(row.querySelector("[data-attachment-skeleton]")).toBeNull();
+      expect(row.querySelector("button svg")).not.toBeNull();
+    });
+
+    it("shows a description image fetched with the token and zooms it", async () => {
+      const pane = await openDetails();
+      const image = pane.querySelector<HTMLImageElement>(
+        "img[data-attachment-image]",
+      )!;
+      expect(image.getAttribute("src")).toBe("data:image/png;base64,AAAA");
+      expect(image.getAttribute("alt")).toBe("inline.png");
+      expect(invoke).toHaveBeenCalledWith("azure_boards_attachment_preview", {
+        url: "https://dev.azure.com/org/guid/_apis/wit/attachments/att-3?fileName=inline.png",
+      });
+      act(() => image.click());
+      await flush();
+      expect(
+        document.querySelector("[data-image-zoom]")?.getAttribute("aria-label"),
+      ).toBe("Image preview: inline.png");
+    });
+
+    it("turns a description image into a link when it cannot load", async () => {
+      previewFails = true;
+      const pane = await openDetails();
+      expect(pane.querySelector("img[data-attachment-image]")).toBeNull();
+      expect(pane.querySelector("a[data-attachment]")?.textContent).toBe(
+        "Image: inline.png",
+      );
+    });
   });
 });

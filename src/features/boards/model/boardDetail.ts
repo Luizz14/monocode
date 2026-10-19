@@ -1,4 +1,5 @@
 import {
+  azureAttachmentPreview,
   azureWorkItemDetail,
   type AzureRelatedItem,
   type AzureWorkItemDetail,
@@ -19,10 +20,16 @@ function keyOf(project: string, id: number): string {
   return `${project.trim()}\u0000${id}`;
 }
 
+/** Inlined images kept at once; a long item must not pin every picture. */
+export const ATTACHMENT_CACHE_MAX = 40;
+
+const attachmentImages = new Map<string, Promise<string>>();
+
 export function clearBoardDetailCache() {
   generation += 1;
   details.clear();
   inflight.clear();
+  attachmentImages.clear();
 }
 
 /** Drops one item so its next open refetches, such as after a move. */
@@ -80,9 +87,88 @@ export function loadBoardDetail(
   return pending;
 }
 
+/**
+ * An attachment image as a `data:` URL, loaded once per URL and shared by
+ * everyone asking, so a thumbnail and the lightbox cost one download. The
+ * oldest entries are dropped past `ATTACHMENT_CACHE_MAX`; a failure is not
+ * kept, so the next ask tries again. `name` saves the download for files that
+ * are not images.
+ */
+export function loadAttachmentDataUrl(
+  url: string,
+  name?: string,
+): Promise<string> {
+  const hit = attachmentImages.get(url);
+  if (hit) {
+    // Re-insert so what is on screen is the last to go.
+    attachmentImages.delete(url);
+    attachmentImages.set(url, hit);
+    return hit;
+  }
+  const pending = azureAttachmentPreview(url, name).then(
+    ({ mimeType, dataBase64 }) => `data:${mimeType};base64,${dataBase64}`,
+  );
+  attachmentImages.set(url, pending);
+  pending.catch(() => {
+    if (attachmentImages.get(url) === pending) attachmentImages.delete(url);
+  });
+  while (attachmentImages.size > ATTACHMENT_CACHE_MAX) {
+    const oldest = attachmentImages.keys().next();
+    if (oldest.done) break;
+    attachmentImages.delete(oldest.value);
+  }
+  return pending;
+}
+
 // ---------------------------------------------------------------------------
 // Pure helpers for the detail pane
 // ---------------------------------------------------------------------------
+
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
+
+/**
+ * Whether the pane may show the attachment as a picture. Mirrors the
+ * backend's list: SVG is a file, never inlined, since it can carry script.
+ */
+export function isImageAttachment(name: string): boolean {
+  const dot = name.lastIndexOf(".");
+  if (dot < 0) return false;
+  return IMAGE_EXTENSIONS.has(name.slice(dot + 1).trim().toLowerCase());
+}
+
+/**
+ * `https://dev.azure.com/org` from a work item's web URL
+ * (`.../org/Project/_workitems/edit/1`): the part before the project.
+ */
+export function azureOrgBase(workItemUrl: string): string | null {
+  const at = workItemUrl.indexOf("/_workitems");
+  if (at < 0) return null;
+  const project = workItemUrl.slice(0, at).replace(/\/+$/, "");
+  const cut = project.lastIndexOf("/");
+  const base = cut > "https://".length ? project.slice(0, cut) : null;
+  return base && /^https?:\/\/[^/]+(\/|$)/i.test(`${base}/`) ? base : null;
+}
+
+/** An image in the work item's own organization that the backend can fetch. */
+export function isOrgAttachmentUrl(src: string, orgBase: string | null): boolean {
+  if (!orgBase || !src.includes("/_apis/wit/attachments/")) return false;
+  return src.toLowerCase().startsWith(`${orgBase.toLowerCase()}/`);
+}
+
+const SIZE_FORMATTER = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 1,
+});
+
+/** `514 KB`, `31.5 MB`: binary steps, whole KB, one decimal from MB up. */
+export function formatBytes(size: number): string {
+  if (!Number.isFinite(size) || size <= 0) return "0 B";
+  if (size < 1024) return `${Math.round(size)} B`;
+  const kilobytes = Math.round(size / 1024);
+  if (kilobytes < 1024) return `${kilobytes} KB`;
+  const megabytes = size / 1024 ** 2;
+  if (megabytes < 1024) return `${SIZE_FORMATTER.format(megabytes)} MB`;
+  return `${SIZE_FORMATTER.format(megabytes / 1024)} GB`;
+}
 
 /** Category of a related item's state: the board's types first, else by name. */
 export function relatedStateCategory(

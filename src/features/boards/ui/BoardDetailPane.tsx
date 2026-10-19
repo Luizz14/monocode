@@ -1,5 +1,12 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useDragResize } from "../../../shared/hooks/useDragResize";
 import { formatInteger } from "../../../shared/lib/numbers";
 import {
@@ -11,18 +18,27 @@ import {
   RefreshCw,
   X,
 } from "../../../shared/ui/icons";
+import { openPathWithDefaultApp } from "../../../platform/tauri/fs";
+import { ImageLightbox } from "../../../shared/ui/ImageLightbox";
 import { RollText } from "../../../shared/ui/RollText";
 import { SafeHtml } from "../../../shared/ui/SafeHtml";
 import { InboxMiniLabel } from "../../inbox/ui/InboxMiniCard";
 import {
+  azureAttachmentOpen,
   azurePerson,
   azureStateMeta,
+  type AzureAttachment,
   type AzureRelatedItem,
   type AzureWorkItemDetail,
 } from "../model/azureBoards";
 import { dropVerdict } from "../model/boardColumns";
 import {
+  azureOrgBase,
+  formatBytes,
   formatDetailDate,
+  isImageAttachment,
+  isOrgAttachmentUrl,
+  loadAttachmentDataUrl,
   loadBoardDetail,
   peekBoardDetail,
   peekStaleBoardDetail,
@@ -438,6 +454,14 @@ function DetailBody({
   const createdBy = azurePerson(detail.createdBy);
   const changedBy = azurePerson(detail.changedBy);
   const relations = detail.relations;
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(
+    null,
+  );
+  const orgBase = azureOrgBase(detail.url || card.url);
+  const inlineImage = useCallback(
+    (src: string) => isOrgAttachmentUrl(src, orgBase),
+    [orgBase],
+  );
   const childCategories = useMemo(
     () =>
       new Map((card.children ?? []).map((child) => [child.id, child.stateCategory])),
@@ -450,12 +474,23 @@ function DetailBody({
   return (
     <>
       <Section title="Description">
-        <SafeHtml html={detail.descriptionHtml} emptyLabel="No description" />
+        <SafeHtml
+          html={detail.descriptionHtml}
+          emptyLabel="No description"
+          inlineImage={inlineImage}
+          resolveImage={resolveInlineImage}
+          onImageClick={(src, alt) => setLightbox({ src, alt })}
+        />
       </Section>
 
       {detail.sections.map((section) => (
         <Section key={section.referenceName} title={section.label}>
-          <SafeHtml html={section.html} />
+          <SafeHtml
+            html={section.html}
+            inlineImage={inlineImage}
+            resolveImage={resolveInlineImage}
+            onImageClick={(src, alt) => setLightbox({ src, alt })}
+          />
         </Section>
       ))}
 
@@ -509,7 +544,9 @@ function DetailBody({
               {relations.attachments.length > 0 ? (
                 <span
                   className="flex items-center gap-1 tabular-nums"
-                  title={relations.attachments.join("\n")}
+                  title={relations.attachments
+                    .map((attachment) => attachment.name)
+                    .join("\n")}
                 >
                   <Paperclip className="size-3" strokeWidth={1.75} />
                   {relations.attachments.length}
@@ -555,6 +592,22 @@ function DetailBody({
         ) : null}
       </Section>
 
+      {relations.attachments.length > 0 ? (
+        <Section
+          title="Attachments"
+          aside={
+            <span className="shrink-0 text-[11px] font-normal tabular-nums text-content/45">
+              {relations.attachments.length}
+            </span>
+          }
+        >
+          <AttachmentList
+            attachments={relations.attachments}
+            onPreview={(src, alt) => setLightbox({ src, alt })}
+          />
+        </Section>
+      ) : null}
+
       <footer className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-stroke pt-2 text-[11px] text-content/45">
         <span className="min-w-0 truncate">
           Updated{changedBy ? ` by ${changedBy.name}` : ""}
@@ -571,7 +624,225 @@ function DetailBody({
           </button>
         ) : null}
       </footer>
+      {lightbox ? (
+        <ImageLightbox
+          src={lightbox.src}
+          alt={lightbox.alt}
+          onClose={() => setLightbox(null)}
+        />
+      ) : null}
     </>
+  );
+}
+
+function resolveInlineImage(src: string): Promise<string> {
+  return loadAttachmentDataUrl(src);
+}
+
+/** Name, size, date and comment columns, as Azure DevOps lays them out. */
+const ATTACHMENT_COLUMNS =
+  "grid-cols-[minmax(0,1fr)_4.5rem] @min-[360px]:grid-cols-[minmax(0,1fr)_4.5rem_6.5rem] @min-[420px]:grid-cols-[minmax(0,1fr)_4.5rem_6.5rem_minmax(0,8rem)]";
+
+function AttachmentList({
+  attachments,
+  onPreview,
+}: {
+  attachments: AzureAttachment[];
+  onPreview: (src: string, alt: string) => void;
+}) {
+  return (
+    <div className="@container flex flex-col gap-1">
+      <div
+        aria-hidden
+        className={`grid gap-x-3 px-1 text-[10.5px] text-content/40 ${ATTACHMENT_COLUMNS}`}
+      >
+        <span>Name</span>
+        <span className="text-right">Size</span>
+        <span className="hidden @min-[360px]:block">Date Added</span>
+        <span className="hidden @min-[420px]:block">Comments</span>
+      </div>
+      <ul role="list" className="flex flex-col gap-1">
+        {attachments.map((attachment) => (
+          <AttachmentRow
+            key={attachment.id || attachment.url}
+            attachment={attachment}
+            onPreview={onPreview}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function AttachmentRow({
+  attachment,
+  onPreview,
+}: {
+  attachment: AzureAttachment;
+  onPreview: (src: string, alt: string) => void;
+}) {
+  const image = isImageAttachment(attachment.name);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const activate = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (image) {
+        onPreview(
+          await loadAttachmentDataUrl(attachment.url, attachment.name),
+          attachment.name,
+        );
+      } else {
+        await openPathWithDefaultApp(
+          await azureAttachmentOpen(attachment.url, attachment.name),
+        );
+      }
+    } catch (failure) {
+      if (mounted.current) setError(boardErrorMessage(failure));
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  };
+
+  const date = attachment.createdDate
+    ? formatDetailDate(attachment.createdDate, { time: false })
+    : "";
+  return (
+    <li className="flex flex-col gap-0.5 rounded-md border border-content/8 px-1 py-1 text-[12px]">
+      <div className={`grid items-center gap-x-3 ${ATTACHMENT_COLUMNS}`}>
+        <button
+          type="button"
+          onClick={() => void activate()}
+          aria-busy={busy}
+          title={
+            attachment.comment
+              ? `${attachment.name}\n${attachment.comment}`
+              : attachment.name
+          }
+          className="flex min-w-0 items-center gap-2 rounded text-left text-content hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          {image ? (
+            <AttachmentThumb attachment={attachment} />
+          ) : (
+            <span
+              aria-hidden
+              className="grid size-10 shrink-0 place-items-center rounded bg-content/6 text-content/45"
+            >
+              <Paperclip className="size-4" strokeWidth={1.75} />
+            </span>
+          )}
+          <span className="min-w-0 truncate hover:underline">
+            {attachment.name}
+          </span>
+          {busy ? (
+            <LoaderCircle
+              aria-hidden
+              className="size-3 shrink-0 animate-spin text-content/50"
+              strokeWidth={1.75}
+            />
+          ) : null}
+        </button>
+        <span className="text-right tabular-nums text-content/60">
+          {formatBytes(attachment.size)}
+        </span>
+        <span className="hidden truncate text-content/60 @min-[360px]:block">
+          {date || "—"}
+        </span>
+        <span
+          className="hidden truncate text-content/60 @min-[420px]:block"
+          title={attachment.comment || undefined}
+        >
+          {attachment.comment || "—"}
+        </span>
+      </div>
+      {error ? (
+        <p role="alert" className="px-1 text-[11px] text-red-400">
+          Couldn't open {attachment.name}: {error}
+        </p>
+      ) : null}
+    </li>
+  );
+}
+
+/**
+ * A 40px picture, fetched once the row nears the viewport. The download needs
+ * the token, so it goes through the backend and arrives as a data URL.
+ */
+function AttachmentThumb({ attachment }: { attachment: AzureAttachment }) {
+  const holder = useRef<HTMLSpanElement>(null);
+  const [near, setNear] = useState(false);
+  const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const element = holder.current;
+    if (!element || near) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setNear(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setNear(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "160px" },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [near]);
+
+  useEffect(() => {
+    if (!near) return;
+    let cancelled = false;
+    loadAttachmentDataUrl(attachment.url, attachment.name).then(
+      (dataUrl) => {
+        if (!cancelled) setSrc(dataUrl);
+      },
+      () => {
+        if (!cancelled) setFailed(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [near, attachment.url, attachment.name]);
+
+  return (
+    <span
+      ref={holder}
+      aria-hidden
+      className="grid size-10 shrink-0 place-items-center overflow-hidden rounded bg-content/6"
+    >
+      {src ? (
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          draggable={false}
+          className="size-full object-cover"
+        />
+      ) : failed ? (
+        <Paperclip className="size-4 text-content/45" strokeWidth={1.75} />
+      ) : (
+        <span
+          data-attachment-skeleton
+          className="size-full animate-pulse bg-content/8 motion-reduce:animate-none"
+        />
+      )}
+    </span>
   );
 }
 

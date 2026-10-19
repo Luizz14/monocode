@@ -1,5 +1,10 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useMemo, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 
 /**
  * Tags kept from provider HTML (Azure DevOps descriptions and rich-text
@@ -85,6 +90,7 @@ const ALLOWED_ATTRS: Record<string, readonly string[]> = {
 const NUMERIC_ATTRS = new Set(["colspan", "rowspan", "start"]);
 
 const SAFE_HREF = /^(https?:|mailto:)/i;
+const HTTP_URL = /^https?:/i;
 
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
@@ -135,26 +141,59 @@ function copyChildren(from: Node, to: Node) {
 }
 
 /**
+ * The stand-in for an image that is not shown: a link to it when it has a
+ * safe address, plain text otherwise.
+ */
+function imageLink(src: string, alt: string): HTMLElement {
+  const linkable = SAFE_HREF.test(src);
+  const link = document.createElement(linkable ? "a" : "span");
+  if (linkable) link.setAttribute("href", src);
+  link.setAttribute("data-attachment", "");
+  if (linkable) {
+    link.setAttribute("rel", "noopener noreferrer");
+    link.setAttribute("title", src);
+  }
+  link.textContent = `Image: ${attachmentName(src, alt)}`;
+  return link;
+}
+
+export type SanitizeOptions = {
+  /**
+   * Whether an http(s) image should stay an `<img>` for `SafeHtml` to fill in
+   * through `resolveImage`. It keeps no `src`, so nothing is fetched before
+   * then; otherwise the image becomes a link.
+   */
+  inlineImage?: (src: string) => boolean;
+};
+
+/**
  * Provider HTML reduced to safe markup. Links keep only http(s) and mailto
  * targets and open through the system browser (see `SafeHtml`). Images
  * become links to the image: Azure attachments need the PAT, so an `<img>`
- * would only ever show as broken.
+ * would only ever show as broken. The exception is an image the caller
+ * claims through `inlineImage`, which stays an `<img data-src>` to be loaded
+ * with the credentials by `SafeHtml`.
  */
-export function sanitizeProviderHtml(html: string): string {
+export function sanitizeProviderHtml(
+  html: string,
+  options?: SanitizeOptions,
+): string {
   if (!html.trim()) return "";
   const parsed = new DOMParser().parseFromString(html, "text/html");
   const holder = document.createElement("div");
   copyChildren(parsed.body, holder);
   for (const image of [...holder.querySelectorAll("img")]) {
     const src = image.getAttribute("src") ?? "";
-    const name = attachmentName(src, image.getAttribute("alt") ?? "");
-    const replacement = SAFE_HREF.test(src)
-      ? document.createElement("a")
-      : document.createElement("span");
-    if (SAFE_HREF.test(src)) replacement.setAttribute("href", src);
-    replacement.setAttribute("data-attachment", "");
-    replacement.textContent = `Image: ${name}`;
-    image.replaceWith(replacement);
+    const alt = image.getAttribute("alt") ?? "";
+    if (HTTP_URL.test(src) && options?.inlineImage?.(src)) {
+      const inline = document.createElement("img");
+      inline.setAttribute("data-src", src);
+      inline.setAttribute("alt", attachmentName(src, alt));
+      inline.setAttribute("data-attachment-image", "");
+      image.replaceWith(inline);
+      continue;
+    }
+    image.replaceWith(imageLink(src, alt));
   }
   for (const anchor of [...holder.querySelectorAll("a")]) {
     const href = anchor.getAttribute("href")?.trim() ?? "";
@@ -172,18 +211,61 @@ export function sanitizeProviderHtml(html: string): string {
 /**
  * Renders provider HTML after `sanitizeProviderHtml`. Clicks on links open
  * in the system browser instead of navigating the window.
+ *
+ * With `inlineImage` and `resolveImage`, images the first one claims are
+ * loaded through the second (which holds the credentials) and shown in
+ * place; one that fails to load falls back to the link it would otherwise
+ * have been. `onImageClick` hears clicks on a loaded one.
  */
 export function SafeHtml({
   html,
   className,
   emptyLabel,
+  inlineImage,
+  resolveImage,
+  onImageClick,
 }: {
   html: string;
   className?: string;
   /** Shown when nothing is left after sanitizing. */
   emptyLabel?: string;
+  inlineImage?: (src: string) => boolean;
+  /** The `data:` URL for an image, or `null` when it cannot be shown. */
+  resolveImage?: (src: string) => Promise<string | null>;
+  onImageClick?: (src: string, alt: string) => void;
 }) {
-  const clean = useMemo(() => sanitizeProviderHtml(html), [html]);
+  // Without a resolver nothing could fill an inline image in.
+  const inline = resolveImage ? inlineImage : undefined;
+  const clean = useMemo(
+    () => sanitizeProviderHtml(html, { inlineImage: inline }),
+    [html, inline],
+  );
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !resolveImage) return;
+    // The html or the resolver changed, or the component left: late answers
+    // belong to markup that is gone.
+    let cancelled = false;
+    for (const image of root.querySelectorAll<HTMLImageElement>("img[data-src]")) {
+      const src = image.getAttribute("data-src") ?? "";
+      const fallBack = () => {
+        if (cancelled || !image.isConnected) return;
+        image.replaceWith(imageLink(src, image.getAttribute("alt") ?? ""));
+      };
+      resolveImage(src).then((dataUrl) => {
+        if (cancelled || !image.isConnected) return;
+        if (!dataUrl) return fallBack();
+        image.setAttribute("src", dataUrl);
+        image.removeAttribute("data-src");
+      }, fallBack);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [clean, resolveImage]);
+
   if (!clean.trim()) {
     return emptyLabel ? (
       <p className="text-[13px] text-content/45">{emptyLabel}</p>
@@ -192,6 +274,15 @@ export function SafeHtml({
   const onClick = (event: ReactMouseEvent<HTMLDivElement>) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    const picture = target.closest("img[data-attachment-image][src]");
+    if (picture && onImageClick) {
+      event.preventDefault();
+      onImageClick(
+        picture.getAttribute("src") ?? "",
+        picture.getAttribute("alt") ?? "",
+      );
+      return;
+    }
     const anchor = target.closest("a[href]");
     if (!anchor) return;
     event.preventDefault();
@@ -200,6 +291,7 @@ export function SafeHtml({
   };
   return (
     <div
+      ref={rootRef}
       className={`safe-html ${className ?? ""}`}
       onClick={onClick}
       // Rebuilt from an allowlist above; nothing else reaches here.

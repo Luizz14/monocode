@@ -193,13 +193,32 @@ export type AzureRelatedItem = {
   url: string;
 };
 
+/** A file attached to a work item. */
+export type AzureAttachment = {
+  /** The guid at the end of the attachment URL. */
+  id: string;
+  name: string;
+  /** Needs the PAT: load it through `azureAttachmentPreview` or `azureAttachmentOpen`. */
+  url: string;
+  /** Bytes. */
+  size: number;
+  createdDate: string;
+  comment: string;
+};
+
+/** An image attachment as base64, for a `data:` URL. */
+export type AzureAttachmentPreview = {
+  mimeType: string;
+  dataBase64: string;
+};
+
 export type AzureWorkItemRelations = {
   parent: AzureRelatedItem | null;
   children: AzureRelatedItem[];
   related: AzureRelatedItem[];
   pullRequests: number;
   commits: number;
-  attachments: string[];
+  attachments: AzureAttachment[];
   truncated: boolean;
 };
 
@@ -415,6 +434,28 @@ export function azureWorkItemDetail(
     project: project.trim(),
     id,
   });
+}
+
+/**
+ * An image attachment inlined as base64. `name` saves the download when it is
+ * not an image; description images carry theirs in `?fileName=`.
+ */
+export function azureAttachmentPreview(
+  url: string,
+  name?: string,
+): Promise<AzureAttachmentPreview> {
+  return invoke<AzureAttachmentPreview>("azure_boards_attachment_preview", {
+    url,
+    ...(name ? { name } : {}),
+  });
+}
+
+/** Downloads an attachment to a temp folder and returns its path. */
+export function azureAttachmentOpen(
+  url: string,
+  name: string,
+): Promise<string> {
+  return invoke<string>("azure_boards_attachment_open", { url, name });
 }
 
 // ---------------------------------------------------------------------------

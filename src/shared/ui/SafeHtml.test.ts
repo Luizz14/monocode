@@ -58,6 +58,30 @@ describe("sanitizeProviderHtml", () => {
     );
   });
 
+  it("keeps a claimed attachment image as an img without src", () => {
+    const src =
+      "https://dev.azure.com/o/p/_apis/wit/attachments/abc?fileName=tela.png";
+    const html = `<p>Veja <img src="${src}" alt="" onerror="x()" style="width:9px"></p>`;
+    const inlineImage = (value: string) =>
+      value.includes("/_apis/wit/attachments/");
+    expect(sanitizeProviderHtml(html, { inlineImage })).toBe(
+      `<p>Veja <img data-src="${src}" alt="tela.png" data-attachment-image=""></p>`,
+    );
+    // Declined, or no option at all: the link it always was.
+    const link = sanitizeProviderHtml(html);
+    expect(link).toContain('<a href="');
+    expect(link).not.toContain("<img");
+    expect(sanitizeProviderHtml(html, { inlineImage: () => false })).toBe(link);
+  });
+
+  it("never inlines an image that is not http(s)", () => {
+    const html =
+      '<img src="data:image/png;base64,AAAA" alt="a"><img src="javascript:x" alt="b"><img alt="c">';
+    expect(sanitizeProviderHtml(html, { inlineImage: () => true })).toBe(
+      '<span data-attachment="">Image: a</span><span data-attachment="">Image: b</span><span data-attachment="">Image: c</span>',
+    );
+  });
+
   it("returns an empty string for blank input", () => {
     expect(sanitizeProviderHtml("  \n")).toBe("");
     expect(sanitizeProviderHtml("<script>x</script>")).toBe("");
@@ -97,6 +121,122 @@ describe("SafeHtml", () => {
     });
     expect(event.defaultPrevented).toBe(true);
     expect(openUrl).toHaveBeenCalledWith("https://docs.example.com/x");
+  });
+
+  describe("inline images", () => {
+    const src =
+      "https://dev.azure.com/o/p/_apis/wit/attachments/abc?fileName=tela.png";
+    const html = `<p>Antes <img src="${src}" alt="tela.png"> depois</p>`;
+    const inlineImage = (value: string) =>
+      value.includes("/_apis/wit/attachments/");
+
+    async function settle() {
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    it("fills the image from resolveImage and reports clicks on it", async () => {
+      const resolveImage = vi.fn(async () => "data:image/png;base64,AAAA");
+      const onImageClick = vi.fn();
+      await act(async () =>
+        root.render(
+          createElement(SafeHtml, {
+            html,
+            inlineImage,
+            resolveImage,
+            onImageClick,
+          }),
+        ),
+      );
+      await settle();
+      expect(resolveImage).toHaveBeenCalledWith(src);
+      const image = container.querySelector("img")!;
+      expect(image.getAttribute("src")).toBe("data:image/png;base64,AAAA");
+      expect(image.hasAttribute("data-src")).toBe(false);
+      expect(image.getAttribute("alt")).toBe("tela.png");
+      act(() => {
+        image.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(onImageClick).toHaveBeenCalledWith(
+        "data:image/png;base64,AAAA",
+        "tela.png",
+      );
+      expect(openUrl).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the link when the image cannot be loaded", async () => {
+      for (const resolveImage of [
+        async () => null,
+        async () => {
+          throw new Error("Not an image");
+        },
+      ]) {
+        await act(async () =>
+          root.render(
+            createElement(SafeHtml, { html, inlineImage, resolveImage }),
+          ),
+        );
+        await settle();
+        expect(container.querySelector("img")).toBeNull();
+        const link = container.querySelector("a[data-attachment]")!;
+        expect(link.getAttribute("href")).toBe(src);
+        expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+        expect(link.textContent).toBe("Image: tela.png");
+        await act(async () => root.render(createElement("div")));
+      }
+    });
+
+    it("makes a link of the image when nothing can resolve it", async () => {
+      await act(async () =>
+        root.render(createElement(SafeHtml, { html, inlineImage })),
+      );
+      expect(container.querySelector("img")).toBeNull();
+      expect(container.querySelector("a[data-attachment]")).not.toBeNull();
+    });
+
+    it("ignores an answer that arrives after the html changed or the view left", async () => {
+      let answer!: (value: string | null) => void;
+      const resolveImage = vi.fn(
+        () =>
+          new Promise<string | null>((resolve) => {
+            answer = resolve;
+          }),
+      );
+      await act(async () =>
+        root.render(createElement(SafeHtml, { html, inlineImage, resolveImage })),
+      );
+      const stale = container.querySelector("img")!;
+      const lateAnswer = answer;
+      await act(async () =>
+        root.render(
+          createElement(SafeHtml, {
+            html: "<p>Outro texto</p>",
+            inlineImage,
+            resolveImage,
+          }),
+        ),
+      );
+      await act(async () => {
+        lateAnswer("data:image/png;base64,AAAA");
+      });
+      await settle();
+      expect(stale.hasAttribute("src")).toBe(false);
+      expect(container.textContent).toBe("Outro texto");
+
+      await act(async () =>
+        root.render(createElement(SafeHtml, { html, inlineImage, resolveImage })),
+      );
+      const pending = container.querySelector("img")!;
+      const unmountedAnswer = answer;
+      await act(async () => root.render(createElement("div")));
+      await act(async () => {
+        unmountedAnswer("data:image/png;base64,BBBB");
+      });
+      await settle();
+      expect(pending.hasAttribute("src")).toBe(false);
+    });
   });
 
   it("shows the empty label when nothing survives", async () => {
