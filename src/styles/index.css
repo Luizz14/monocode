@@ -4571,3 +4571,11 @@ html.layout-inset.theme-light .dialog-scrim {
   border: 0;
   border-top: 1px solid var(--color-stroke);
 }
+
+/* Board avatars stack with a small overlap, so each needs an opaque fill. */
+.board-avatar {
+  background: color-mix(in srgb, var(--color-content) 10%, var(--color-background-base));
+}
+.board-avatar-strong {
+  background: color-mix(in srgb, var(--color-content) 18%, var(--color-background-base));
+}

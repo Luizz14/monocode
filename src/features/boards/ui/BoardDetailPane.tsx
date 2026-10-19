@@ -251,7 +251,7 @@ export function BoardDetailPane({
             {owners?.source === "children" ? (
               <span className="flex min-w-0 items-center gap-1.5">
                 <span className="shrink-0 text-content/45">With</span>
-                <span className="flex shrink-0 items-center -space-x-1.5">
+                <span className="flex shrink-0 items-center -space-x-1">
                   {ownerPeople.map((person, index) => (
                     <PersonAvatar
                       key={`${person.id ?? person.name}-${index}`}

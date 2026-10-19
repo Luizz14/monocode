@@ -68,11 +68,9 @@ export function PersonAvatar({
     <span
       title={title ?? person.name}
       data-person={person.isMe ? "me" : undefined}
-      className={`grid shrink-0 place-items-center overflow-hidden rounded-full font-medium ring-1 ${className} ${
-        person.isMe
-          ? "ring-accent"
-          : "ring-background-base"
-      } ${strong ? "bg-content/15 text-content/80" : "bg-content/8 text-content/60"}`}
+      className={`board-avatar grid shrink-0 place-items-center overflow-hidden rounded-full font-medium ring-1 ${className} ${
+        person.isMe ? "ring-accent" : "ring-background-base"
+      } ${strong ? "board-avatar-strong text-content/85" : "text-content/60"}`}
     >
       {showImage ? (
         <img
@@ -107,7 +105,7 @@ function People({ card }: { card: BoardCardData }) {
   return (
     <span
       data-card-people={fromChildren ? "children" : "assignee"}
-      className="ml-auto flex shrink-0 items-center -space-x-1.5"
+      className="ml-auto flex shrink-0 items-center -space-x-1"
     >
       {shown.map((person, index) => (
         <PersonAvatar
@@ -127,7 +125,7 @@ function People({ card }: { card: BoardCardData }) {
             .slice(MAX_PEOPLE)
             .map((person) => person.name)
             .join(", ")}
-          className="grid size-5 shrink-0 place-items-center rounded-full bg-content/8 text-[9px] tabular-nums text-content/55 ring-1 ring-background-base"
+          className="board-avatar grid size-5 shrink-0 place-items-center rounded-full text-[9px] tabular-nums text-content/55 ring-1 ring-background-base"
         >
           +{extra}
         </span>
