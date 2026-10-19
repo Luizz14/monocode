@@ -7,14 +7,18 @@ import {
 } from "react";
 import { LoaderCircle, X } from "../../../shared/ui/icons";
 import { InboxMiniLabel } from "../../inbox/ui/InboxMiniCard";
+import { describeOwner } from "../model/boardOwners";
 import { cardAriaLabel } from "../model/boardView";
 import type {
   BoardCard as BoardCardData,
   BoardColumn,
+  BoardPerson,
 } from "../model/boardTypes";
 import { LinearPriorityGlyph, WorkItemTypeGlyph } from "./boardGlyphs";
 
 const MAX_TAGS = 3;
+/** Avatars shown before the `+N` overflow. */
+const MAX_PEOPLE = 3;
 
 /** Stable handlers shared by every card on the board. */
 export type BoardCardHandlers = {
@@ -45,29 +49,89 @@ export function initials(name: string): string {
   return letters.toUpperCase();
 }
 
-function Assignee({ card }: { card: BoardCardData }) {
+/** Initials, or Linear's image. Azure avatars need the PAT, so only the name is used. */
+export function PersonAvatar({
+  person,
+  title,
+  className = "size-5 text-[9px]",
+  strong = false,
+}: {
+  person: BoardPerson;
+  title?: string;
+  className?: string;
+  /** The primary owner: a firmer fill than the people beside them. */
+  strong?: boolean;
+}) {
   const [failed, setFailed] = useState(false);
-  const assignee = card.assignee;
-  if (!assignee) return null;
-  // Azure avatars need the PAT, so only Linear loads the image.
-  const showImage =
-    card.provider === "linear" && !!assignee.avatarUrl && !failed;
+  const showImage = !!person.avatarUrl && !failed;
   return (
     <span
-      title={assignee.name}
-      className="ml-auto grid size-5 shrink-0 place-items-center overflow-hidden rounded-full bg-content/10 text-[9px] font-medium text-content/65"
+      title={title ?? person.name}
+      data-person={person.isMe ? "me" : undefined}
+      className={`grid shrink-0 place-items-center overflow-hidden rounded-full font-medium ring-1 ${className} ${
+        person.isMe
+          ? "ring-accent"
+          : "ring-background-base"
+      } ${strong ? "bg-content/15 text-content/80" : "bg-content/8 text-content/60"}`}
     >
       {showImage ? (
         <img
-          src={assignee.avatarUrl}
+          src={person.avatarUrl}
           alt=""
           draggable={false}
           onError={() => setFailed(true)}
           className="size-full object-cover"
         />
       ) : (
-        initials(assignee.name)
+        initials(person.name)
       )}
+    </span>
+  );
+}
+
+/**
+ * Who holds the card: the people on its children, primary first, else its
+ * Assigned To. Hovering an avatar lists that person's children.
+ */
+function People({ card }: { card: BoardCardData }) {
+  const owners = card.owners;
+  const people = owners
+    ? [owners.primary, ...owners.others]
+    : card.assignee
+      ? [card.assignee]
+      : [];
+  if (people.length === 0) return null;
+  const shown = people.slice(0, MAX_PEOPLE);
+  const extra = people.length - shown.length;
+  const fromChildren = owners?.source === "children";
+  return (
+    <span
+      data-card-people={fromChildren ? "children" : "assignee"}
+      className="ml-auto flex shrink-0 items-center -space-x-1.5"
+    >
+      {shown.map((person, index) => (
+        <PersonAvatar
+          key={`${person.id ?? person.name}-${index}`}
+          person={person}
+          strong={fromChildren && index === 0}
+          title={
+            fromChildren
+              ? describeOwner(person, card.children)
+              : `Assigned to ${person.name}`
+          }
+        />
+      ))}
+      {extra > 0 ? (
+        <span
+          title={people
+            .slice(MAX_PEOPLE)
+            .map((person) => person.name)
+            .join(", ")}
+          className="grid size-5 shrink-0 place-items-center rounded-full bg-content/8 text-[9px] tabular-nums text-content/55 ring-1 ring-background-base"
+        >
+          +{extra}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -159,7 +223,7 @@ export const BoardCard = memo(function BoardCard({
         <span className="line-clamp-2 text-[12.5px] leading-snug text-content">
           {card.title || "Untitled"}
         </span>
-        {tags.length > 0 || card.assignee ? (
+        {tags.length > 0 || card.assignee || card.owners ? (
           <span className="flex min-w-0 items-center gap-1">
             {tags.map((tag) => (
               <InboxMiniLabel
@@ -172,7 +236,7 @@ export const BoardCard = memo(function BoardCard({
                 +{extraTags}
               </span>
             ) : null}
-            <Assignee card={card} />
+            <People card={card} />
           </span>
         ) : null}
       </button>

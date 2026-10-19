@@ -7,6 +7,7 @@ import {
 } from "../model/boardTypes";
 
 export type BoardCardMenuAction =
+  | { kind: "details" }
   | { kind: "open" }
   | { kind: "copy-link" }
   | { kind: "copy-id" }
@@ -16,7 +17,7 @@ export type BoardCardMenuAction =
 const MOVE_PREFIX = "move:";
 
 /**
- * The card's action menu: open, copy link and ID, start a chat, and a
+ * The card's action menu: details, open, copy link and ID, start a chat, and a
  * "Move to…" submenu where the current column is checked and columns the
  * card can't land on are disabled with the reason.
  */
@@ -27,6 +28,7 @@ export function boardCardMenuItems(
 ): ExplorerMenuItem[] {
   const provider = BOARD_PROVIDER_LABELS[card.provider];
   const items: ExplorerMenuItem[] = [
+    { kind: "item", id: "details", label: "View details" },
     {
       kind: "item",
       id: "open",
@@ -78,6 +80,7 @@ export function boardCardMenuAction(id: string): BoardCardMenuAction | null {
     return columnId ? { kind: "move", columnId } : null;
   }
   switch (id) {
+    case "details":
     case "open":
     case "copy-link":
     case "copy-id":

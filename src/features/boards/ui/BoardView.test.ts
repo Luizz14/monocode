@@ -3,9 +3,11 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  AzureBoardChildren,
   AzureBoardItem,
   AzureBoardLayout,
   AzureTeamSetup,
+  AzureWorkItemDetail,
   AzureWorkItemTypeStates,
 } from "../model/azureBoards";
 import {
@@ -165,10 +167,145 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+const me = {
+  id: "u-me",
+  displayName: "Luiz Gustavo Moura",
+  uniqueName: "luiz@example.com",
+};
+
+const children: AzureBoardChildren = {
+  items: [
+    {
+      id: 386818,
+      parentId: 10,
+      workItemType: "Task",
+      title: "Em implementação",
+      state: "Completed",
+      assignedTo: { ...me, imageUrl: null },
+      changedDate: "2026-10-16T17:18:16Z",
+      url: "https://dev.azure.com/org/Proj/_workitems/edit/386818",
+    },
+    {
+      id: 386819,
+      parentId: 10,
+      workItemType: "Task",
+      title: "Revisão",
+      state: "In Progress",
+      assignedTo: {
+        id: "u-t",
+        displayName: "Tiago Mendonca",
+        uniqueName: "",
+        imageUrl: null,
+      },
+      changedDate: "2026-10-17T10:00:00Z",
+      url: "",
+    },
+  ],
+  types: [
+    {
+      name: "Task",
+      states: [
+        { name: "Defined", color: "b2b2b2", category: "Proposed" },
+        { name: "In Progress", color: "007acc", category: "InProgress" },
+        { name: "Completed", color: "339933", category: "Completed" },
+      ],
+    },
+  ],
+  truncated: false,
+};
+
+function detailFor(id: number): AzureWorkItemDetail {
+  const base = items.find((entry) => entry.id === id)!;
+  return {
+    id,
+    rev: base.rev,
+    workItemType: base.workItemType,
+    title: base.title,
+    state: base.state,
+    reason: "Implementation started",
+    project: "Proj",
+    assignedTo: null,
+    createdBy: {
+      id: "u-v",
+      displayName: "Vanessa Alves",
+      uniqueName: "",
+      imageUrl: null,
+    },
+    changedBy: {
+      id: "u-m",
+      displayName: "Marco Henrique",
+      uniqueName: "",
+      imageUrl: null,
+    },
+    createdDate: "2026-08-31T19:06:04Z",
+    changedDate: "2026-10-14T13:27:41Z",
+    areaPath: "Proj\\Team",
+    iterationPath: "Proj\\Sprint 42",
+    tags: ["Android", "PF"],
+    commentCount: 2,
+    descriptionHtml:
+      '<div><p><b>Como</b> cliente logado</p><script>alert(1)</script><a href="https://docs.example.com/x">doc</a></div>',
+    sections: [
+      {
+        referenceName: "Custom.AC",
+        label: "Critérios de Aceite",
+        html: "<ul><li>Exibir menu</li></ul>",
+      },
+    ],
+    planning: [
+      {
+        referenceName: "Microsoft.VSTS.Scheduling.StoryPoints",
+        label: "Story Points",
+        value: "2",
+        kind: "number",
+      },
+      {
+        referenceName: "Custom.Area",
+        label: "Área Demandante",
+        value: "Canais",
+        kind: "text",
+      },
+    ],
+    storyPoints: 2,
+    priority: 2,
+    relations: {
+      parent: {
+        id: 359655,
+        link: "Parent",
+        workItemType: "Feature",
+        title: "AppBanese - Menu Ajuda",
+        state: "Em Desenvolvimento",
+        assignedTo: null,
+        changedDate: "2026-10-08T00:00:00Z",
+        url: "https://dev.azure.com/org/Proj/_workitems/edit/359655",
+      },
+      children: children.items
+        .filter((child) => child.parentId === id)
+        .map((child) => ({
+          id: child.id,
+          link: "Child",
+          workItemType: child.workItemType,
+          title: child.title,
+          state: child.state,
+          assignedTo: child.assignedTo,
+          changedDate: child.changedDate,
+          url: child.url,
+        })),
+      related: [],
+      pullRequests: 2,
+      commits: 1,
+      attachments: ["menu ajuda.mp4"],
+      truncated: false,
+    },
+    url: base.url,
+  };
+}
+
 let azureConnected: boolean;
 let moveResult: Deferred<AzureBoardItem> | null;
+let detailFails: boolean;
 
-function route(command: string): unknown {
+function route(command: string, args?: unknown): unknown {
   switch (command) {
     case "azure_devops_status":
       return azureConnected
@@ -195,6 +332,15 @@ function route(command: string): unknown {
     case "azure_boards_move":
       if (moveResult) return moveResult.promise;
       throw new Error("Unexpected move");
+    case "azure_boards_children":
+      return children;
+    case "azure_boards_me":
+      return me;
+    case "azure_boards_work_item": {
+      if (detailFails) throw new Error("TF401232: Work item does not exist");
+      const { id } = args as { project: string; id: number };
+      return detailFor(id);
+    }
     default:
       throw new Error(`Unexpected command: ${command}`);
   }
@@ -264,6 +410,23 @@ function liveRegion(): string {
   return container.querySelector('[role="status"]')?.textContent ?? "";
 }
 
+function openMenu(target: HTMLElement) {
+  act(() => {
+    target.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 20,
+        clientY: 20,
+      }),
+    );
+  });
+}
+
+function detailPane(): HTMLElement | null {
+  return container.querySelector<HTMLElement>("[data-board-detail]");
+}
+
 function pressKey(target: EventTarget, init: KeyboardEventInit) {
   const event = new KeyboardEvent("keydown", {
     bubbles: true,
@@ -283,7 +446,10 @@ beforeEach(() => {
   azureConnected = true;
   moveResult = null;
   invoke.mockReset();
-  invoke.mockImplementation(async (command: string) => route(command));
+  detailFails = false;
+  invoke.mockImplementation(async (command: string, args?: unknown) =>
+    route(command, args),
+  );
   openUrl.mockClear();
   onClose = vi.fn();
   onOpenIntegrations = vi.fn();
@@ -422,7 +588,7 @@ describe("BoardView", () => {
   it("disables columns a Bug can't move to in “Move to…”", async () => {
     storeBoards([azureBoard()]);
     await render();
-    act(() => card("#20").click());
+    openMenu(card("#20"));
     await flush();
     const moveTo = [
       ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
@@ -453,7 +619,7 @@ describe("BoardView", () => {
   it("closes the open menu on the first Escape and Boards on the second", async () => {
     storeBoards([azureBoard()]);
     await render();
-    act(() => card("#20").click());
+    openMenu(card("#20"));
     await flush();
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
 
@@ -487,5 +653,168 @@ describe("BoardView", () => {
     await flush();
     expect(input.value).toBe("");
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("shows who holds a story from its children, the connected user marked", async () => {
+    storeBoards([azureBoard()]);
+    await render();
+    const people = card("#10").querySelector<HTMLElement>(
+      '[data-card-people="children"]',
+    )!;
+    expect(people).not.toBeNull();
+    const avatars = [...people.querySelectorAll<HTMLElement>("span[title]")];
+    // Tiago's review is still in progress, so he ranks first; Luiz is "me".
+    expect(avatars.map((avatar) => avatar.textContent)).toEqual(["TM", "LM"]);
+    expect(avatars[0]!.title).toBe("Tiago Mendonca · Revisão (In Progress)");
+    expect(avatars[1]!.title).toBe(
+      "Luiz Gustavo Moura · Em implementação (Completed)",
+    );
+    expect(avatars[1]!.dataset.person).toBe("me");
+    expect(card("#10").getAttribute("aria-label")).toContain(
+      "With Tiago Mendonca, Luiz Gustavo Moura",
+    );
+    // Cards without children keep the plain Assigned To (none here).
+    expect(card("#11").querySelector("[data-card-people]")).toBeNull();
+  });
+
+  it("filters to Mine: held through a child, plus Defined cards nobody took", async () => {
+    storeBoards([azureBoard()]);
+    await render();
+    const chip = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Mine",
+    )!;
+    expect(chip.getAttribute("aria-pressed")).toBe("false");
+    act(() => chip.click());
+    await flush();
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+    const refs = [
+      ...container.querySelectorAll<HTMLButtonElement>("button[data-card-key]"),
+    ].map((button) => button.dataset.cardKey);
+    // #20 is a New (Proposed) bug with no children and #10 has my child;
+    // #11 is Active with nobody on it, so it is neither mine nor available.
+    expect(refs).toEqual(["azuredevops:20", "azuredevops:10"]);
+    expect(container.textContent).toContain("2 items");
+    act(() => chip.click());
+    await flush();
+    expect(container.textContent).toContain("3 items");
+  });
+
+  it("opens the details pane on click, moves from it, and closes it before the filter on Escape", async () => {
+    storeBoards([azureBoard()]);
+    await render();
+    act(() => card("#10").click());
+    await flush();
+    const pane = detailPane()!;
+    expect(pane).not.toBeNull();
+    expect(pane.getAttribute("aria-label")).toBe("#10 details");
+    expect(invoke).toHaveBeenCalledWith("azure_boards_work_item", {
+      project: "Proj",
+      id: 10,
+    });
+    const text = pane.textContent ?? "";
+    expect(text).toContain("Story ten");
+    expect(text).toContain("With");
+    expect(text).toContain("Tiago Mendonca, Luiz Gustavo Moura");
+    expect(text).toContain("2 comments");
+    expect(text).toContain("Implementation started");
+    expect(text).toContain("Como cliente logado");
+    expect(text).not.toContain("alert(1)");
+    expect(pane.querySelector("script")).toBeNull();
+    expect(text).toContain("Critérios de Aceite");
+    expect(text).toContain("Exibir menu");
+    expect(text).toContain("Story Points");
+    expect(text).toContain("Área Demandante");
+    expect(text).toContain("Canais");
+    expect(text).toContain("Vanessa Alves");
+    expect(text).toContain("AppBanese - Menu Ajuda");
+    expect(text).toContain("Em implementação");
+    expect(text).toContain("Revisão");
+    expect(text).toContain("1 commit");
+    expect(text).toContain("Updated by Marco Henrique");
+
+    // Moving from the pane goes through the same path as a drag.
+    moveResult = deferred();
+    const select = pane.querySelector<HTMLSelectElement>(
+      'select[aria-label="Move to column"]',
+    )!;
+    expect(select.value).toBe("az:c2");
+    const closed = [...select.options].find((option) =>
+      option.textContent?.startsWith("Closed"),
+    )!;
+    expect(closed.disabled).toBe(false);
+    act(() => {
+      select.value = "az:c3";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+    expect(invoke).toHaveBeenCalledWith(
+      "azure_boards_move",
+      expect.objectContaining({
+        request: expect.objectContaining({ id: 10, state: "Closed" }),
+      }),
+    );
+    await act(async () =>
+      moveResult!.resolve({
+        ...items[0]!,
+        rev: 2,
+        state: "Closed",
+        boardColumn: "Closed",
+      }),
+    );
+    await flush();
+    expect(column("Closed").contains(card("#10"))).toBe(true);
+    expect(liveRegion()).toContain("Moved #10 to Closed");
+
+    // Escape: the pane first, then the filter, then Boards.
+    const input = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Filter cards"]',
+    )!;
+    const setValue = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    act(() => {
+      setValue.call(input, "story");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+    pressKey(window, { key: "Escape" });
+    await flush();
+    expect(detailPane()).toBeNull();
+    expect(input.value).toBe("story");
+    pressKey(window, { key: "Escape" });
+    await flush();
+    expect(input.value).toBe("");
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("opens details from the right-click menu and reports a failed load", async () => {
+    storeBoards([azureBoard()]);
+    await render();
+    detailFails = true;
+    openMenu(card("#20"));
+    await flush();
+    const details = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((button) => button.textContent?.includes("View details"))!;
+    expect(details).toBeDefined();
+    act(() => details.click());
+    await flush();
+    const pane = detailPane()!;
+    expect(pane.getAttribute("aria-label")).toBe("#20 details");
+    expect(pane.textContent).toContain("Crash on login");
+    expect(pane.querySelector('[role="alert"]')?.textContent).toContain(
+      "TF401232",
+    );
+    // A different card replaces the pane's content.
+    act(() => card("#11").click());
+    await flush();
+    expect(detailPane()?.getAttribute("aria-label")).toBe("#11 details");
+    const close = detailPane()!.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close details"]',
+    )!;
+    act(() => close.click());
+    await flush();
+    expect(detailPane()).toBeNull();
   });
 });

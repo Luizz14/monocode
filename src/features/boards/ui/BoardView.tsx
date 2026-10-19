@@ -48,6 +48,7 @@ import { BoardColumn } from "./BoardColumn";
 import { BoardColumns } from "./BoardColumns";
 import { BoardConfigDialog } from "./BoardConfigDialog";
 import { BoardDeleteDialog } from "./BoardDeleteDialog";
+import { BoardDetailPane } from "./BoardDetailPane";
 import {
   BoardEmpty,
   BoardError,
@@ -78,6 +79,8 @@ type EscapeControl = {
   dragging: boolean;
   cancelDrag: () => void;
   menuOpen: boolean;
+  detailOpen: boolean;
+  closeDetail: () => void;
   search: string;
   clearSearch: () => void;
 };
@@ -86,6 +89,8 @@ const IDLE_CONTROL: EscapeControl = {
   dragging: false,
   cancelDrag: () => {},
   menuOpen: false,
+  detailOpen: false,
+  closeDetail: () => {},
   search: "",
   clearSearch: () => {},
 };
@@ -117,7 +122,7 @@ export function BoardView({
 
   // Registered once; reads everything through refs. Order: a running drag,
   // then any open dialog or menu (left to Modal or Popover), then a handled
-  // event, then the card filter, then leaving Boards.
+  // event, then the details pane, then the card filter, then leaving Boards.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -134,6 +139,10 @@ export function BoardView({
       if (event.defaultPrevented) return;
       event.preventDefault();
       event.stopPropagation();
+      if (current.detailOpen) {
+        current.closeDetail();
+        return;
+      }
       if (current.search) {
         current.clearSearch();
         return;
@@ -317,9 +326,12 @@ function BoardBody({
   onStart?: (item: InboxItem) => void | Promise<unknown>;
 }) {
   const [search, setSearch] = useState("");
+  const [mine, setMine] = useState(false);
   const [menu, setMenu] = useState<CardMenu | null>(null);
   const [dragging, setDragging] = useState(false);
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  /** The card open in the details pane. */
+  const [detailKey, setDetailKey] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -329,11 +341,14 @@ function BoardBody({
   const board = useBoardSnapshot(config, {
     paused: dragging || menu !== null,
     search,
+    mine,
   });
   const { snapshot, grouped, pending, moveErrors, moveCard, dismissMoveError } =
     board;
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
+  const detailKeyRef = useRef(detailKey);
+  detailKeyRef.current = detailKey;
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
   const groupedRef = useRef(grouped);
@@ -400,11 +415,25 @@ function BoardBody({
   const dragState = drag.drag;
   useEffect(() => setDragging(dragState !== null), [dragState]);
 
+  const closeDetail = useCallback((refocus = true) => {
+    const key = detailKeyRef.current;
+    setDetailKey(null);
+    if (refocus && key) {
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (active && active !== document.body) return;
+        cardButton(rootRef.current, key)?.focus();
+      });
+    }
+  }, []);
+
   useLayoutEffect(() => {
     control.current = {
       dragging: dragState !== null,
       cancelDrag: drag.cancel,
       menuOpen: menu !== null,
+      detailOpen: detailKey !== null,
+      closeDetail: () => closeDetail(true),
       search,
       clearSearch: () => setSearch(""),
     };
@@ -513,8 +542,8 @@ function BoardBody({
           openCardUrl(key);
           return;
         }
-        const rect = event.currentTarget.getBoundingClientRect();
-        setMenu({ key, x: rect.left, y: rect.bottom + 2 });
+        setFocusKey(key);
+        setDetailKey(key);
       },
       onAuxClick: (key, event) => {
         if (event.button !== 1) return;
@@ -580,6 +609,14 @@ function BoardBody({
   useEffect(() => {
     if (menuGone) setMenu(null);
   }, [menuGone]);
+  const detailCard =
+    detailKey && snapshot
+      ? snapshot.cards.find((card) => card.key === detailKey)
+      : undefined;
+  const detailGone = detailKey !== null && !detailCard;
+  useEffect(() => {
+    if (detailGone) setDetailKey(null);
+  }, [detailGone]);
   const closeMenu = (refocus: boolean) => {
     const key = menu?.key;
     setMenu(null);
@@ -600,6 +637,9 @@ function BoardBody({
     closeMenu(true);
     if (!card || !action) return;
     switch (action.kind) {
+      case "details":
+        setDetailKey(card.key);
+        break;
       case "open":
         openCardUrl(card.key);
         break;
@@ -707,6 +747,8 @@ function BoardBody({
         limit={snapshot?.limit ?? 0}
         busy={board.loading || board.revalidating}
         webUrl={snapshot?.webUrl ?? null}
+        mine={mine}
+        onMineChange={config.provider === "azuredevops" ? setMine : undefined}
         onEdit={edit}
         onRefresh={() => board.refresh("all")}
       />
@@ -728,7 +770,29 @@ function BoardBody({
           </button>
         </div>
       ) : null}
-      {content}
+      <div className="flex min-h-0 min-w-0 flex-1">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{content}</div>
+        {detailCard && snapshot ? (
+          <BoardDetailPane
+            key={detailCard.key}
+            card={detailCard}
+            snapshot={snapshot}
+            pending={pending.has(detailCard.key)}
+            canStart={!!onStart}
+            onClose={() => closeDetail(true)}
+            onMove={(columnId) => {
+              if (columnId !== detailCard.columnId) {
+                void move(detailCard.key, columnId);
+              }
+            }}
+            onStart={() => {
+              if (onStart) {
+                void Promise.resolve(onStart(boardCardToInboxItem(detailCard)));
+              }
+            }}
+          />
+        ) : null}
+      </div>
       {menu && menuCard && snapshot ? (
         <ExplorerMenu
           x={menu.x}

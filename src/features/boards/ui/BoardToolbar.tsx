@@ -26,6 +26,8 @@ export function BoardToolbar({
   limit,
   busy,
   webUrl,
+  mine,
+  onMineChange,
   onEdit,
   onRefresh,
 }: {
@@ -41,6 +43,9 @@ export function BoardToolbar({
   limit: number;
   busy: boolean;
   webUrl: string | null;
+  /** The quick "Mine" filter; the chip only shows with a handler. */
+  mine?: boolean;
+  onMineChange?: (on: boolean) => void;
   onEdit: () => void;
   onRefresh: () => void;
 }) {
@@ -60,6 +65,21 @@ export function BoardToolbar({
           className="h-7 w-full rounded-md bg-transparent pl-7 pr-2 text-[12px] text-content outline-none placeholder:text-content/40"
         />
       </div>
+      {onMineChange ? (
+        <button
+          type="button"
+          aria-pressed={mine === true}
+          title="Cards you hold through a task or an assignment, plus Defined cards nobody has taken"
+          onClick={() => onMineChange(!mine)}
+          className={`h-6 shrink-0 rounded-full px-2 text-[11px] font-medium ${
+            mine
+              ? "bg-accent/15 text-accent"
+              : "text-content/50 hover:bg-content/8 hover:text-content"
+          }`}
+        >
+          Mine
+        </button>
+      ) : null}
       <div className="flex min-w-0 flex-1 items-center gap-1.5 px-1 text-[12px] text-content/50">
         {iterationLabel ? (
           <>
