@@ -43,7 +43,14 @@ import { recordInboxSelfActivity } from "./inboxSelfActivity";
 
 export type GithubTaskKind = "issue" | "pr";
 export type GithubPrAction =
-  "merge" | "squash" | "rebase" | "draft" | "ready" | "close" | "reopen";
+  | "merge"
+  | "squash"
+  | "rebase"
+  | "draft"
+  | "ready"
+  | "close"
+  | "reopen"
+  | "approve";
 export type InboxKind = GithubTaskKind | "linear" | "jira";
 
 export type GithubLabel = {
@@ -98,6 +105,8 @@ export type GithubWorkItemDetails = {
   baseRefName?: string;
   headRefName?: string;
   reviewDecision?: string;
+  /** Azure DevOps: the connected user's vote (10, 5, 0, -5, -10). */
+  myVote?: number;
 };
 
 export type GithubWorkItemComment = {
@@ -565,6 +574,9 @@ export async function githubPrAction(
   });
   const key = workItemLookupKey(repo, "pr", number);
   workItemByKey.set(key, item);
+  // A review changes the decision shown in the details; the next read must
+  // not come from the cache.
+  if (action === "approve") fetchedAt.delete(`details:${key}`);
   if (inboxListCache) {
     inboxListCache = {
       ...inboxListCache,
@@ -590,6 +602,8 @@ export function githubReviewDecisionLabel(decision: string): string {
       return "Changes requested";
     case "REVIEW_REQUIRED":
       return "Review required";
+    case "WAITING":
+      return "Waiting for author";
     default:
       return "";
   }

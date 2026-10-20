@@ -85,6 +85,9 @@ pub struct AzureDevOpsWorkItemDetails {
     pub base_ref_name: String,
     pub head_ref_name: String,
     pub review_decision: String,
+    /// The connected user's vote on a pull request: 10 approved, 5 approved
+    /// with suggestions, 0 none, -5 waiting for author, -10 rejected.
+    pub my_vote: i64,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -296,6 +299,23 @@ pub async fn azure_devops_work_item_comment(
     .map_err(|error| error.to_string())?
 }
 
+/// Casts the connected user's vote on a pull request and returns the
+/// refreshed details.
+#[tauri::command]
+pub async fn azure_devops_pr_vote(
+    app: AppHandle,
+    repo: String,
+    number: i64,
+    vote: i64,
+) -> Result<AzureDevOpsWorkItemDetails, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = require_config(&app)?;
+        azure_devops_pr_vote_for(&config, &repo, number, vote)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 pub async fn azure_devops_mr_diff(
     app: AppHandle,
@@ -369,7 +389,10 @@ fn azure_devops_work_item_details_for(
             API_VERSION
         );
         let response = azure_get(config, &path)?;
-        return parse_pr_details(&response.value);
+        // The user's own vote needs their identity; a failure there still
+        // leaves the rest of the details readable.
+        let me = cached_current_user_id(config).unwrap_or_default();
+        return parse_pr_details(&response.value, &me);
     }
     let path = format!(
         "/_apis/wit/workitems/{}?$expand=relations&api-version={}",
@@ -819,11 +842,52 @@ fn parse_pr(row: &Value, repo: &str, base_url: &str) -> Option<AzureDevOpsWorkIt
     })
 }
 
-fn parse_pr_details(value: &Value) -> Result<AzureDevOpsWorkItemDetails, String> {
+/// Azure reviewer votes: 10 approved, 5 approved with suggestions, 0 no
+/// vote, -5 waiting for author, -10 rejected.
+pub(crate) const PR_VOTES: [i64; 5] = [10, 5, 0, -5, -10];
+
+/// The pull request's standing from its reviewers' votes, in GitHub's
+/// vocabulary so the Inbox shows it the same way: a rejection wins, then
+/// a wait, then any approval; with reviewers but no votes it needs review.
+fn pr_review_decision(reviewers: &[Value]) -> String {
+    let votes: Vec<i64> = reviewers
+        .iter()
+        .filter_map(|reviewer| reviewer.get("vote").and_then(Value::as_i64))
+        .collect();
+    if votes.iter().any(|vote| *vote <= -10) {
+        "CHANGES_REQUESTED".into()
+    } else if votes.iter().any(|vote| *vote < 0) {
+        "WAITING".into()
+    } else if votes.iter().any(|vote| *vote > 0) {
+        "APPROVED".into()
+    } else if reviewers.is_empty() {
+        String::new()
+    } else {
+        "REVIEW_REQUIRED".into()
+    }
+}
+
+fn pr_my_vote(reviewers: &[Value], me: &str) -> i64 {
+    if me.is_empty() {
+        return 0;
+    }
+    reviewers
+        .iter()
+        .find(|reviewer| string_field(reviewer, "id").is_some_and(|id| id.eq_ignore_ascii_case(me)))
+        .and_then(|reviewer| reviewer.get("vote").and_then(Value::as_i64))
+        .unwrap_or(0)
+}
+
+fn parse_pr_details(value: &Value, me: &str) -> Result<AzureDevOpsWorkItemDetails, String> {
     if !value.is_object() {
         return Err("Azure DevOps did not return that pull request".into());
     }
     let creator = value.get("createdBy");
+    let reviewers: Vec<Value> = value
+        .get("reviewers")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     Ok(AzureDevOpsWorkItemDetails {
         body: string_field(value, "description").unwrap_or_default(),
         author: creator
@@ -841,8 +905,48 @@ fn parse_pr_details(value: &Value) -> Result<AzureDevOpsWorkItemDetails, String>
             .unwrap_or_default(),
         base_ref_name: short_ref(&string_field(value, "targetRefName").unwrap_or_default()),
         head_ref_name: short_ref(&string_field(value, "sourceRefName").unwrap_or_default()),
-        review_decision: String::new(),
+        review_decision: pr_review_decision(&reviewers),
+        my_vote: pr_my_vote(&reviewers, me),
     })
+}
+
+/// `PUT .../pullrequests/{id}/reviewers/{me}` with the vote; Azure adds the
+/// user as a reviewer when they were not one yet.
+fn pr_vote_path(project: &str, repo_name: &str, number: i64, reviewer_id: &str) -> String {
+    format!(
+        "/{}/_apis/git/repositories/{}/pullrequests/{}/reviewers/{}?api-version={}",
+        encode_segment(project),
+        encode_segment(repo_name),
+        number,
+        encode_segment(reviewer_id),
+        API_VERSION
+    )
+}
+
+fn checked_vote(vote: i64) -> Result<i64, String> {
+    if PR_VOTES.contains(&vote) {
+        Ok(vote)
+    } else {
+        Err("Unknown pull request vote".into())
+    }
+}
+
+fn azure_devops_pr_vote_for(
+    config: &AzureDevOpsConfig,
+    repo: &str,
+    number: i64,
+    vote: i64,
+) -> Result<AzureDevOpsWorkItemDetails, String> {
+    validate_item("pr", number)?;
+    let vote = checked_vote(vote)?;
+    let (project, repo_name) = split_repo(repo)?;
+    let me = azure_current_user(config)?;
+    azure_put_json(
+        config,
+        &pr_vote_path(&project, &repo_name, number, &me.id),
+        json!({ "vote": vote }),
+    )?;
+    azure_devops_work_item_details_for(config, repo, "pr", number)
 }
 
 fn parse_pr_thread(
@@ -972,6 +1076,7 @@ fn parse_wit_details(value: &Value) -> Result<AzureDevOpsWorkItemDetails, String
         base_ref_name: String::new(),
         head_ref_name: String::new(),
         review_decision: String::new(),
+        my_vote: 0,
     })
 }
 
@@ -1741,6 +1846,51 @@ pub(crate) fn azure_post_json_patch(
     }
 }
 
+/// PUT with a JSON body; auth failures get the write-specific message.
+pub(crate) fn azure_put_json(
+    config: &AzureDevOpsConfig,
+    path: &str,
+    body: Value,
+) -> Result<AzureResponse, String> {
+    let url = format!("{}{}", config.url.trim_end_matches('/'), path);
+    let payload = serde_json::to_string(&body).map_err(|error| error.to_string())?;
+    let result = azure_agent()
+        .put(&url)
+        .set("Authorization", &basic_auth(&config.token))
+        .set("Accept", "application/json")
+        .set("Content-Type", "application/json")
+        .set("User-Agent", USER_AGENT)
+        .send_string(&payload);
+    match result {
+        Err(ureq::Error::Status(status @ (401 | 403), response)) => {
+            let body = response.into_string().unwrap_or_default();
+            Err(azure_write_http_error(status, &body))
+        }
+        other => read_azure_response(other),
+    }
+}
+
+/// The connected user's id, fetched once per organization for the life of
+/// the process: a PAT's identity does not change.
+pub(crate) fn cached_current_user_id(config: &AzureDevOpsConfig) -> Result<String, String> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(id) = cache
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&config.url).cloned())
+    {
+        return Ok(id);
+    }
+    let id = azure_current_user(config)?.id;
+    if let Ok(mut map) = cache.lock() {
+        map.insert(config.url.clone(), id.clone());
+    }
+    Ok(id)
+}
+
 /// DELETE; any 2xx is success and the body (the deleted item) is ignored.
 /// Azure moves the item to the recycle bin rather than destroying it.
 pub(crate) fn azure_delete(config: &AzureDevOpsConfig, path: &str) -> Result<(), String> {
@@ -2319,6 +2469,53 @@ fn expand_home(input: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_pull_request_standing_and_my_vote() {
+        let value = json!({
+            "description": "Body",
+            "createdBy": { "displayName": "Ada" },
+            "targetRefName": "refs/heads/main",
+            "sourceRefName": "refs/heads/feature",
+            "reviewers": [
+                { "id": "U-ME", "displayName": "Me", "vote": 10 },
+                { "id": "u-2", "displayName": "Other", "vote": 0 }
+            ]
+        });
+        let details = parse_pr_details(&value, "u-me").unwrap();
+        assert_eq!(details.review_decision, "APPROVED");
+        assert_eq!(details.my_vote, 10);
+        assert_eq!(details.base_ref_name, "main");
+        let other = parse_pr_details(&value, "u-9").unwrap();
+        assert_eq!(other.my_vote, 0);
+        assert_eq!(parse_pr_details(&value, "").unwrap().my_vote, 0);
+
+        let votes = |list: &[i64]| {
+            let reviewers: Vec<Value> = list.iter().map(|vote| json!({ "vote": vote })).collect();
+            pr_review_decision(&reviewers)
+        };
+        assert_eq!(votes(&[10, -10, 5]), "CHANGES_REQUESTED");
+        assert_eq!(votes(&[10, -5]), "WAITING");
+        assert_eq!(votes(&[0, 5]), "APPROVED");
+        assert_eq!(votes(&[0, 0]), "REVIEW_REQUIRED");
+        assert_eq!(votes(&[]), "");
+        let value = serde_json::to_value(&details).unwrap();
+        assert_eq!(value["myVote"], 10);
+        assert_eq!(value["reviewDecision"], "APPROVED");
+    }
+
+    #[test]
+    fn builds_the_vote_request() {
+        assert_eq!(
+            pr_vote_path("TI Banese", "app web", 40604, "abc-123"),
+            "/TI%20Banese/_apis/git/repositories/app%20web/pullrequests/40604/reviewers/abc-123?api-version=7.1"
+        );
+        for vote in PR_VOTES {
+            assert_eq!(checked_vote(vote).unwrap(), vote);
+        }
+        assert!(checked_vote(7).is_err());
+        assert!(checked_vote(-1).is_err());
+    }
 
     #[test]
     fn parses_the_connection_user() {

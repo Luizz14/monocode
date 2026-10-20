@@ -3365,6 +3365,7 @@ fn github_pr_action_args(repo: &str, number: i64, action: &str) -> Result<Vec<St
         "ready" => vec!["pr", "ready", &number, "--repo", &repo],
         "close" => vec!["pr", "close", &number, "--repo", &repo],
         "reopen" => vec!["pr", "reopen", &number, "--repo", &repo],
+        "approve" => vec!["pr", "review", &number, "--repo", &repo, "--approve"],
         _ => return Err("Unknown GitHub pull request action".into()),
     };
     Ok(args.into_iter().map(str::to_string).collect())
@@ -9415,6 +9416,10 @@ mod tests {
         assert_eq!(
             github_pr_action_args("acme/web", 42, "reopen").unwrap(),
             ["pr", "reopen", "42", "--repo", "acme/web"]
+        );
+        assert_eq!(
+            github_pr_action_args("acme/web", 42, "approve").unwrap(),
+            ["pr", "review", "42", "--repo", "acme/web", "--approve"]
         );
         assert!(github_pr_action_args("acme/web", 42, "delete").is_err());
         assert!(github_pr_action_args("acme/web", 0, "merge").is_err());

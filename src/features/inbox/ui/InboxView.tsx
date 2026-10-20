@@ -168,9 +168,12 @@ import {
   type GitlabWorkItemThread,
 } from "../model/gitlab";
 import {
+  AZURE_PR_VOTES,
   AZUREDEVOPS_CHANGE_EVENT,
   azureDevOpsConnected,
   azureDevOpsMrDiff,
+  azureDevOpsPrVote,
+  type AzurePrVote,
   azureDevOpsWorkItemComment,
   azureDevOpsWorkItemDetails,
   azureDevOpsWorkItemThread,
@@ -1748,7 +1751,195 @@ function githubPrActionCopy(
         confirm: "Reopen pull request",
         progress: "Reopening…",
       };
+    case "approve":
+      return {
+        title: "Approve this pull request?",
+        detail: `Your review will approve the changes from ${source} as they are now.`,
+        confirm: "Approve",
+        progress: "Approving…",
+      };
   }
+}
+
+const AZURE_VOTE_OPTIONS: Array<{
+  vote: AzurePrVote;
+  label: string;
+  description: string;
+}> = [
+  {
+    vote: AZURE_PR_VOTES.approve,
+    label: "Approve",
+    description: "The changes are good to merge.",
+  },
+  {
+    vote: AZURE_PR_VOTES.approveWithSuggestions,
+    label: "Approve with suggestions",
+    description: "Good to merge, with comments the author may take.",
+  },
+  {
+    vote: AZURE_PR_VOTES.waitForAuthor,
+    label: "Wait for author",
+    description: "The author should answer your comments first.",
+  },
+  {
+    vote: AZURE_PR_VOTES.reject,
+    label: "Reject",
+    description: "The changes should not be merged as they are.",
+  },
+  {
+    vote: AZURE_PR_VOTES.none,
+    label: "Reset vote",
+    description: "Withdraw your vote.",
+  },
+];
+
+export function azureVoteLabel(vote: number | undefined): string {
+  switch (vote) {
+    case AZURE_PR_VOTES.approve:
+      return "You approved";
+    case AZURE_PR_VOTES.approveWithSuggestions:
+      return "You approved with suggestions";
+    case AZURE_PR_VOTES.waitForAuthor:
+      return "You asked the author to wait";
+    case AZURE_PR_VOTES.reject:
+      return "You rejected";
+    default:
+      return "";
+  }
+}
+
+/**
+ * The connected user's vote on an Azure DevOps pull request: Approve as the
+ * main action, the other votes behind a menu. A vote is a reviewer field
+ * Azure lets you change, so it needs no confirmation.
+ */
+export function AzurePrActions({
+  item,
+  details,
+  onDetails,
+}: {
+  item: InboxItem;
+  details: GithubWorkItemDetails | null;
+  onDetails: (details: GithubWorkItemDetails) => void;
+}) {
+  const group = useRef<HTMLDivElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (item.state.trim().toLowerCase() !== "open") return null;
+  const myVote = details?.myVote ?? 0;
+
+  const cast = async (vote: AzurePrVote) => {
+    setMenuOpen(false);
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      onDetails(await azureDevOpsPrVote(item.repo, item.number, vote));
+    } catch (failure: unknown) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const approved = myVote === AZURE_PR_VOTES.approve;
+  return (
+    <>
+      <div
+        ref={group}
+        role="group"
+        aria-label="Vote on pull request"
+        className={`inline-flex h-7 overflow-hidden rounded-md ${
+          approved
+            ? "border border-emerald-400/40 text-emerald-400"
+            : "bg-content text-background-base"
+        }`}
+      >
+        <button
+          type="button"
+          disabled={busy || approved}
+          onClick={() => void cast(AZURE_PR_VOTES.approve)}
+          className={`inline-flex items-center gap-1.5 px-3 text-[12px] font-medium disabled:cursor-default ${
+            approved ? "" : "hover:bg-background-base/10 disabled:opacity-40"
+          } ${PR_ACTION_PRESS}`}
+        >
+          <CheckCircle className="size-3.5" strokeWidth={1.75} />
+          {busy ? "Voting…" : approved ? "Approved" : "Approve"}
+        </button>
+        <button
+          type="button"
+          title="Vote options"
+          aria-label="Vote options"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          disabled={busy}
+          onClick={() => setMenuOpen((open) => !open)}
+          className={`grid w-7 place-items-center border-l disabled:cursor-default disabled:opacity-40 ${
+            approved
+              ? "border-emerald-400/30 hover:bg-emerald-400/10"
+              : "border-background-base/20 hover:bg-background-base/10"
+          } ${PR_ACTION_PRESS}`}
+        >
+          <ChevronDown className="size-3" strokeWidth={1.75} />
+        </button>
+      </div>
+      {myVote !== 0 && !approved ? (
+        <span role="status" className="text-[11px] text-content/55">
+          {azureVoteLabel(myVote)}
+        </span>
+      ) : null}
+      {error ? (
+        <span role="alert" className="text-[11px] text-rose-400">
+          {error}
+        </span>
+      ) : null}
+      {menuOpen ? (
+        <Popover
+          anchor={group}
+          gap={4}
+          width={280}
+          autoFocus
+          onDismiss={() => setMenuOpen(false)}
+          role="menu"
+          tabIndex={-1}
+          aria-label="Vote"
+          className="p-1"
+        >
+          {AZURE_VOTE_OPTIONS.map((option) => (
+            <button
+              key={option.vote}
+              type="button"
+              role="menuitemradio"
+              aria-checked={option.vote === myVote}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => void cast(option.vote)}
+              className={`flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left hover:bg-content/8 ${
+                option.vote === myVote
+                  ? "bg-selection text-content"
+                  : "text-content/75"
+              }`}
+            >
+              <span
+                aria-hidden
+                className={`mt-1 size-1.5 shrink-0 rounded-full ${
+                  option.vote === myVote ? "bg-emerald-400" : "bg-content/20"
+                }`}
+              />
+              <span className="min-w-0">
+                <span className="block text-[12px] font-medium leading-tight">
+                  {option.label}
+                </span>
+                <span className="mt-0.5 block text-[11px] leading-snug text-content/45">
+                  {option.description}
+                </span>
+              </span>
+            </button>
+          ))}
+        </Popover>
+      ) : null}
+    </>
+  );
 }
 
 export function GithubPrActions({
@@ -1756,11 +1947,14 @@ export function GithubPrActions({
   baseRef,
   headRef,
   onChange,
+  onReviewed,
 }: {
   item: InboxItem;
   baseRef: string;
   headRef: string;
   onChange?: (item: InboxItem) => void;
+  /** A review was submitted: the details' decision should be read again. */
+  onReviewed?: () => void;
 }) {
   const mergeGroup = useRef<HTMLDivElement>(null);
   const [mergeAction, setMergeAction] = useState<GithubPrMergeAction>("merge");
@@ -1807,8 +2001,11 @@ export function GithubPrActions({
         (action === "merge" || action === "squash" || action === "rebase") &&
           next.state.trim().toLowerCase() !== "merged"
           ? "Merge queued or auto-merge enabled."
-          : null,
+          : action === "approve"
+            ? "Approved."
+            : null,
       );
+      if (action === "approve") onReviewed?.();
       onChange?.({
         ...item,
         ...next,
@@ -1860,6 +2057,17 @@ export function GithubPrActions({
             <ChevronDown className="size-3" strokeWidth={1.75} />
           </button>
         </div>
+      ) : null}
+      {state === "open" && !item.draft ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={(event) => askToRun("approve", event.currentTarget)}
+          className={`${stateButton} hover:text-emerald-400`}
+        >
+          <CheckCircle className="size-3.5" strokeWidth={1.75} />
+          Approve
+        </button>
       ) : null}
       {state === "open" && item.draft ? (
         <button
@@ -2127,6 +2335,8 @@ export function InboxDetail({
             ? peekGithubWorkItemThread(item.repo, githubKind, item.number)
             : null;
   const [details, setDetails] = useState<GithubWorkItemDetails | null>(cached);
+  /** Bumped when a review changed what the details should say. */
+  const [detailsNonce, setDetailsNonce] = useState(0);
   const [loading, setLoading] = useState(cached == null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"summary" | "code" | "checks">("summary");
@@ -2301,6 +2511,7 @@ export function InboxDetail({
     linear,
     panelMaxAge,
     revision,
+    detailsNonce,
   ]);
 
   useEffect(() => {
@@ -2874,6 +3085,14 @@ export function InboxDetail({
                     baseRef={baseRef}
                     headRef={headRef}
                     onChange={onItemChange}
+                    onReviewed={() => setDetailsNonce((nonce) => nonce + 1)}
+                  />
+                ) : null}
+                {azureDevOpsKind === "pr" ? (
+                  <AzurePrActions
+                    item={item}
+                    details={details}
+                    onDetails={setDetails}
                   />
                 ) : null}
                 {onDiscuss ? (

@@ -190,6 +190,32 @@ describe("InboxDetail layout", () => {
     expect(markup).toContain('aria-label="Checks: Loading checks"');
   });
 
+  it("offers to approve an open pull request on GitHub and Azure DevOps", () => {
+    const github = renderDetail(item({ kind: "pr", state: "open" }));
+    expect(github).toContain(">Approve<");
+    // Drafts and closed pull requests cannot be approved.
+    expect(
+      renderDetail(item({ kind: "pr", state: "open", draft: true })),
+    ).not.toContain(">Approve<");
+    expect(renderDetail(item({ kind: "pr", state: "closed" }))).not.toContain(
+      ">Approve<",
+    );
+
+    const azure = renderDetail(
+      item({
+        kind: "pr",
+        provider: "azuredevops",
+        repo: "TI Banese/app-web",
+        url: "https://dev.azure.com/org/TI%20Banese/_git/app-web/pullrequest/40604",
+      }),
+    );
+    expect(azure).toContain('aria-label="Vote on pull request"');
+    expect(azure).toContain('aria-label="Vote options"');
+    expect(azure).toContain(">Approve<");
+    // Azure has no merge button here: merging stays in Azure DevOps.
+    expect(azure).not.toContain("Merge pull request");
+  });
+
   it("offers GitHub-style actions for an open pull request", () => {
     const markup = renderDetail(item({ kind: "pr", state: "open" }));
 

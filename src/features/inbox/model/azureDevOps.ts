@@ -249,6 +249,37 @@ export async function azureDevOpsWorkItemComment(
   return url;
 }
 
+/** Azure reviewer votes, as the API counts them. */
+export const AZURE_PR_VOTES = {
+  approve: 10,
+  approveWithSuggestions: 5,
+  none: 0,
+  waitForAuthor: -5,
+  reject: -10,
+} as const;
+
+export type AzurePrVote = (typeof AZURE_PR_VOTES)[keyof typeof AZURE_PR_VOTES];
+
+/**
+ * Casts the connected user's vote on a pull request and returns the
+ * refreshed details, which replace the cached ones.
+ */
+export async function azureDevOpsPrVote(
+  repo: string,
+  number: number,
+  vote: AzurePrVote,
+): Promise<AzureDevOpsWorkItemDetails> {
+  const details = await invoke<AzureDevOpsWorkItemDetails>(
+    "azure_devops_pr_vote",
+    { repo, number, vote },
+  );
+  const key = itemKey(repo, "pr", number);
+  detailsByKey.set(key, details);
+  detailsInflight.delete(key);
+  recordInboxSelfActivity({ provider: "azuredevops", kind: "pr", repo, number });
+  return details;
+}
+
 export function peekAzureDevOpsMrDiff(
   repo: string,
   number: number,
