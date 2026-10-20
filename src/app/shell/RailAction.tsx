@@ -33,6 +33,7 @@ export function RailAction({
           ? (event) => {
               event.preventDefault();
               event.stopPropagation();
+              event.currentTarget.focus();
               onOpenContextMenu(event.clientX, event.clientY);
             }
           : undefined
@@ -47,6 +48,7 @@ export function RailAction({
                 return;
               event.preventDefault();
               event.stopPropagation();
+              event.currentTarget.focus();
               const rect = event.currentTarget.getBoundingClientRect();
               onOpenContextMenu(rect.left, rect.bottom);
             }
